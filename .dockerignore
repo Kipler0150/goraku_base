@@ -1,0 +1,10 @@
+node_modules
+client/dist
+coverage
+.git
+.env
+.env.*
+!.env.example
+!client/.env.example
+!server/.env.example
+.impeccable
