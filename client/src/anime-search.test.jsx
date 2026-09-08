@@ -345,4 +345,43 @@ describe('anime search experience', () => {
     });
     expect(screen.getByRole('heading', { name: 'Movie result' })).toBeInTheDocument();
   });
+
+  it('loads and retries a later TV page while retaining the active TMDB source', async () => {
+    let searchCount = 0;
+    fetch.mockImplementation((url) => {
+      if (url === '/api/health') return Promise.resolve(healthResponse());
+      searchCount += 1;
+      const params = new URL(url, 'http://localhost').searchParams;
+      if (searchCount === 1) {
+        return Promise.resolve(searchResponse(searchPayload([
+          typedMedia({ id: '40', title: 'Severance', type: 'TV', metadata: { seasonCount: 2, episodeCount: 19 } })
+        ], 1, true, 'tmdb')));
+      }
+      if (searchCount === 2) return Promise.reject(new TypeError('temporary network down'));
+      expect(params.get('type')).toBe('tv');
+      expect(params.get('provider')).toBe('tmdb');
+      expect(params.get('page')).toBe('2');
+      return Promise.resolve(searchResponse(searchPayload([
+        typedMedia({ id: '41', title: 'TV result two', type: 'TV', metadata: { seasonCount: null, episodeCount: null } })
+      ], 2, false, 'tmdb')));
+    });
+    render(<App />);
+
+    const typeSelector = screen.getByRole('combobox', { name: 'Search media type' });
+    fireEvent.change(typeSelector, { target: { value: 'tv' } });
+    const input = screen.getByRole('searchbox', { name: 'Search TV by title' });
+    fireEvent.change(input, { target: { value: 'severance' } });
+    fireEvent.submit(input.closest('form'));
+
+    expect(await screen.findByRole('heading', { name: 'Severance' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Load more TV results for severance' }));
+
+    expect(await screen.findByRole('button', { name: 'Retry page 2' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Severance' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry page 2' }));
+
+    expect(await screen.findByRole('heading', { name: 'TV result two' })).toBeInTheDocument();
+    expect(screen.getByText('2 Seasons')).toBeInTheDocument();
+    expect(screen.getByText('19 Episodes')).toBeInTheDocument();
+  });
 });

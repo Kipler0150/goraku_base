@@ -465,4 +465,72 @@ describe('typed media search HTTP API', () => {
     });
     assert.equal(requestCount, 0);
   });
+
+  it('preserves TMDB-owned pagination and pins later pages to TMDB', async () => {
+    const tmdb = createMediaMockAdapter({
+      results: [],
+      pagination: { page: 2, perPage: 20, hasMore: true }
+    });
+    const app = createApp({ tmdbAdapter: tmdb.adapter });
+
+    const response = await request(app)
+      .get('/api/media/search?type=movie&q=arrival&page=2&perPage=24&provider=tmdb');
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body.pagination, { page: 2, perPage: 20, hasMore: true });
+    assert.deepEqual(tmdb.calls, [{
+      type: 'movie',
+      query: 'arrival',
+      page: 2,
+      perPage: 24,
+      includeAdult: true
+    }]);
+  });
+
+  it('maps TMDB timeout, rate-limit, unavailable, malformed, and generic failures safely', async () => {
+    const cases = [
+      [PROVIDER_ERROR_CODES.TIMEOUT, 'PROVIDER_TIMEOUT', 'TMDB did not respond within the allowed time.'],
+      [PROVIDER_ERROR_CODES.RATE_LIMITED, 'PROVIDER_RATE_LIMITED', 'TMDB rate limit reached.'],
+      [PROVIDER_ERROR_CODES.UNAVAILABLE, 'PROVIDER_UNAVAILABLE', 'TMDB is currently unavailable.'],
+      [PROVIDER_ERROR_CODES.INVALID_RESPONSE, 'PROVIDER_INVALID_RESPONSE', 'TMDB returned an invalid response.'],
+      [PROVIDER_ERROR_CODES.ERROR, 'PROVIDER_ERROR', 'TMDB request failed.']
+    ];
+
+    for (const [providerCode, expectedCode, expectedMessage] of cases) {
+      const app = createApp({
+        tmdbAdapter: {
+          async searchMedia() {
+            throw new ProviderError(providerCode, 'private TMDB diagnostic');
+          }
+        }
+      });
+
+      const response = await request(app).get('/api/media/search?type=tv&q=severance');
+
+      assert.equal(response.status, 503);
+      assert.deepEqual(response.body, {
+        error: { code: expectedCode, message: expectedMessage, details: [] }
+      });
+      assert.equal(JSON.stringify(response.body).includes('private TMDB diagnostic'), false);
+    }
+  });
+
+  it('returns the normal empty page for short movie and TV queries without calling TMDB', async () => {
+    const tmdb = createMediaMockAdapter();
+    const app = createApp({ tmdbAdapter: tmdb.adapter });
+
+    for (const type of ['movie', 'tv']) {
+      const response = await request(app).get(`/api/media/search?type=${type}&q=ab`);
+
+      assert.equal(response.status, 200);
+      assert.deepEqual(response.body, {
+        results: [],
+        source: 'tmdb',
+        pagination: { page: 1, perPage: 12, hasMore: false },
+        providerErrors: []
+      });
+    }
+
+    assert.equal(tmdb.calls.length, 0);
+  });
 });

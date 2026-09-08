@@ -17,6 +17,27 @@ function response(body, status = 200) {
 }
 
 describe('TMDB adapter', () => {
+  it('returns empty movie and TV pages without inventing normalized results', async () => {
+    const requestedTypes = [];
+    const adapter = createTMDBAdapter({
+      accessToken: 'fixture-access-token',
+      request: async (url) => {
+        requestedTypes.push(url.pathname.split('/').at(-1));
+        return response({ page: 2, total_pages: 2, total_results: 0, results: [] });
+      }
+    });
+
+    const movie = await adapter.searchMedia({ type: 'movie', query: 'missing', page: 2 });
+    const tv = await adapter.searchMedia({ type: 'tv', query: 'missing', page: 2 });
+
+    assert.deepEqual(requestedTypes, ['movie', 'tv']);
+    assert.deepEqual(movie, {
+      results: [],
+      pagination: { page: 2, perPage: TMDB_PAGE_SIZE, hasMore: false }
+    });
+    assert.deepEqual(tv, movie);
+  });
+
   it('normalizes movie search results and sends the server-side Bearer request', async () => {
     let request;
     const adapter = createTMDBAdapter({
@@ -156,14 +177,35 @@ describe('TMDB adapter', () => {
       message: 'TMDB is currently unavailable.'
     });
 
+    const forbidden = createTMDBAdapter({ accessToken: 'fixture-access-token', request: async () => response({}, 403) });
+    await assert.rejects(() => forbidden.searchMedia({ type: 'tv', query: 'forbidden' }), {
+      code: 'PROVIDER_UNAVAILABLE',
+      message: 'TMDB is currently unavailable.'
+    });
+
     const rateLimited = createTMDBAdapter({ accessToken: 'fixture-access-token', request: async () => response({}, 429) });
     await assert.rejects(() => rateLimited.searchMedia({ type: 'movie', query: 'busy' }), {
       code: 'PROVIDER_RATE_LIMITED',
       message: 'TMDB rate limit reached.'
     });
 
+    const upstreamFailure = createTMDBAdapter({ accessToken: 'fixture-access-token', request: async () => response({}, 500) });
+    await assert.rejects(() => upstreamFailure.searchMedia({ type: 'tv', query: 'unavailable' }), {
+      code: 'PROVIDER_ERROR',
+      message: 'TMDB request failed.'
+    });
+
     const malformed = createTMDBAdapter({ accessToken: 'fixture-access-token', request: async () => response({ page: 1, total_pages: 1, results: {} }) });
     await assert.rejects(() => malformed.searchMedia({ type: 'movie', query: 'broken' }), {
+      code: 'PROVIDER_INVALID_RESPONSE',
+      message: 'TMDB returned an invalid response.'
+    });
+
+    const malformedItem = createTMDBAdapter({
+      accessToken: 'fixture-access-token',
+      request: async () => response({ page: 1, total_pages: 1, results: [{ id: 'not-an-id' }] })
+    });
+    await assert.rejects(() => malformedItem.searchMedia({ type: 'tv', query: 'broken item' }), {
       code: 'PROVIDER_INVALID_RESPONSE',
       message: 'TMDB returned an invalid response.'
     });

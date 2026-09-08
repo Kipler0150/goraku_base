@@ -4,7 +4,7 @@ An entertainment bookmarking and tracking application for anime, movies, televis
 
 ## Project status
 
-Phase 1: complete runnable foundation. Phase 2: complete anime search through Express with unofficial AniList integration and an optional unofficial MyAnimeList availability fallback, plus normalized MediaCards, pagination, loading/error states, and a temporary local adult-content filter. Phase 3 implementation: movie and TV title search through the server-side TMDB adapter with the same generic search surface. The Phase 3 learning walkthrough and final consolidated verification remain in progress; manga, RAWG, authentication, persistence, personal ratings, and library features remain planned.
+Phase 1: complete runnable foundation. Phase 2: complete anime search through Express with unofficial AniList integration and an optional unofficial MyAnimeList availability fallback, plus normalized MediaCards, pagination, loading/error states, and a temporary local adult-content filter. Phase 3: complete movie and TV title search through the server-side TMDB adapter with the same generic search surface, server-only configuration, attribution, and credential-free repository verification. Manga, RAWG, authentication, persistence, personal ratings, and library features remain planned.
 
 ## Portfolio focus
 
@@ -64,7 +64,7 @@ The contract deliberately excludes user-owned Library Item fields such as person
 
 ## Planned features
 
-Unified media search, media details, a personal library, favorites, ratings, notes, tags, collections, and progress appropriate to each media type. Additional media types and providers can be added later.
+Media details, a personal library, favorites, ratings, notes, tags, collections, and progress appropriate to each media type. Additional media types and providers can be added later.
 
 ## Documentation
 
@@ -73,5 +73,7 @@ Unified media search, media details, a personal library, favorites, ratings, not
 - [Phase 1 learning walkthrough](docs/phase-1-walkthrough.md)
 - [Phase 2 AniList search specification](.scratch/phase-2-anilist-search/spec.md)
 - [Phase 2 anime search walkthrough](docs/phase-2-walkthrough.md)
+- [Phase 3 TMDB movie and TV search specification](.scratch/phase-3-tmdb-search/spec.md)
+- [Phase 3 TMDB search walkthrough](docs/phase-3-walkthrough.md)
 
 Future deployment documentation remains intentionally separate and is not claimed as verified in Phase 1.
