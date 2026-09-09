@@ -52,6 +52,10 @@ docker compose down
 
 Open <http://localhost:5173>; the container client still calls `/api/health` relatively and Vite proxies inside the Compose network.
 
+Compose also starts a persistent PostgreSQL 16 service as `postgres`. Its default local connection is available to the server as `DATABASE_URL`; run `docker compose exec server npm run db:migrate` after the database reports healthy. Native migration runs use the server-only `DATABASE_URL` in `.env.local` (the placeholder is documented in `.env.example` and `server/.env.example`).
+
+PostgreSQL migration integration tests require the separate `goraku_test` database: set `TEST_DATABASE_URL` to that database URL and run `npm run test:integration`. The test refuses other database names and resets only that dedicated test database.
+
 For a background verification run, use `docker compose up --build -d`, confirm both services with `docker compose ps`, check `curl.exe http://localhost:3001/api/health` and `curl.exe http://localhost:5173/api/health`, then stop everything with `docker compose down`. Compose is a local development path, not a production deployment recipe.
 
 ## Shared Media contract

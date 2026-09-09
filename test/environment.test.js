@@ -44,6 +44,20 @@ describe('local environment loading', () => {
     assert.doesNotMatch(examples[2], /TMDB_ACCESS_TOKEN|TMDB_IMAGE_BASE_URL/);
   });
 
+  it('documents DATABASE_URL only in server environment examples', async () => {
+    const examples = await Promise.all([
+      readFile('.env.example', 'utf8'),
+      readFile('server/.env.example', 'utf8'),
+      readFile('client/.env.example', 'utf8')
+    ]);
+
+    for (const example of examples.slice(0, 2)) {
+      assert.match(example, /^# DATABASE_URL=postgresql:\/\/goraku:goraku_dev@localhost:5432\/goraku$/m);
+      assert.doesNotMatch(example, /^(?!\s*#)\s*DATABASE_URL=/m);
+    }
+    assert.doesNotMatch(examples[2], /DATABASE_URL|POSTGRES_(DB|USER|PASSWORD)/);
+  });
+
   it('documents blank server-only game provider configuration without exposing it to the client', async () => {
     const examples = await Promise.all([
       readFile('.env.example', 'utf8'),
