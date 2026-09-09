@@ -2,8 +2,29 @@ import { requestJson } from './request.js';
 
 const SEARCH_PAGE_LIMIT = 100;
 const SEARCH_PER_PAGE_LIMIT = 24;
-const SEARCH_TYPES = new Set(['anime', 'movie', 'tv', 'game']);
+const SEARCH_TYPES = new Set(['anime', 'movie', 'tv', 'game', 'all']);
 const SEARCH_PROVIDERS = new Set(['anilist', 'myanimelist', 'tmdb', 'rawg']);
+
+function isValidProviderPagination(pagination) {
+  return Boolean(
+    pagination &&
+    typeof pagination === 'object' &&
+    Number.isInteger(pagination.page) &&
+    Number.isInteger(pagination.perPage) &&
+    typeof pagination.hasMore === 'boolean'
+  );
+}
+
+function isValidCombinedPagination(pagination) {
+  if (!pagination || typeof pagination !== 'object') return false;
+  if (!Number.isInteger(pagination.page) || typeof pagination.hasMore !== 'boolean') return false;
+  if (pagination.continuation !== null && (typeof pagination.continuation !== 'string' || pagination.continuation.length === 0)) return false;
+  if (!pagination.providers || typeof pagination.providers !== 'object' || Array.isArray(pagination.providers)) return false;
+
+  return Object.entries(pagination.providers).every(([provider, providerPagination]) => (
+    SEARCH_PROVIDERS.has(provider) && isValidProviderPagination(providerPagination)
+  ));
+}
 
 export function isValidMediaSearchPayload(payload) {
   return Boolean(
@@ -11,10 +32,9 @@ export function isValidMediaSearchPayload(payload) {
     typeof payload === 'object' &&
     Array.isArray(payload.results) &&
     payload.pagination &&
-    Number.isInteger(payload.pagination.page) &&
-    Number.isInteger(payload.pagination.perPage) &&
-    typeof payload.pagination.hasMore === 'boolean' &&
-    SEARCH_PROVIDERS.has(payload.source) &&
+    (payload.source === 'combined'
+      ? isValidCombinedPagination(payload.pagination)
+      : isValidProviderPagination(payload.pagination) && SEARCH_PROVIDERS.has(payload.source)) &&
     Array.isArray(payload.providerErrors)
   );
 }
@@ -26,9 +46,11 @@ export async function searchMedia({
   perPage = 12,
   includeAdult = true,
   provider,
+  cursor,
+  retryProvider,
   signal
 } = {}) {
-  if (!SEARCH_TYPES.has(type)) throw new TypeError('type must be anime, movie, tv, or game.');
+  if (!SEARCH_TYPES.has(type)) throw new TypeError('type must be anime, movie, tv, game, or all.');
 
   const searchParams = new URLSearchParams({
     type,
@@ -38,6 +60,8 @@ export async function searchMedia({
     includeAdult: String(includeAdult)
   });
   if (provider) searchParams.set('provider', provider);
+  if (cursor) searchParams.set('cursor', cursor);
+  if (retryProvider) searchParams.set('retryProvider', retryProvider);
   const payload = await requestJson(`/api/media/search?${searchParams.toString()}`, { signal });
   if (!isValidMediaSearchPayload(payload)) {
     const error = new Error('The API returned an invalid media search payload.');

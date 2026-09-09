@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { searchMedia } from '../api/mediaSearch.js';
+import { mediaIdentity } from '../mediaIdentity.js';
 
 const SEARCH_DEBOUNCE_MS = 300;
-const SEARCH_TYPES = new Set(['anime', 'movie', 'tv']);
+const SEARCH_TYPES = new Set(['anime', 'movie', 'tv', 'game', 'all']);
 
 const initialSearchState = {
   status: 'initial',
@@ -10,8 +11,10 @@ const initialSearchState = {
   results: [],
   source: null,
   pagination: null,
+  providerErrors: [],
   error: null,
   loadingPage: null,
+  loadingProvider: null,
   pageError: null
 };
 
@@ -20,6 +23,12 @@ function emptySearchState(query = '') {
     ...initialSearchState,
     query
   };
+}
+
+function defaultProviderForType(type) {
+  if (type === 'anime') return undefined;
+  if (type === 'game') return 'rawg';
+  return 'tmdb';
 }
 
 export function useMediaSearch({ type = 'anime' } = {}) {
@@ -42,7 +51,13 @@ export function useMediaSearch({ type = 'anime' } = {}) {
     requestIdRef.current += 1;
   }, []);
 
-  const runSearch = useCallback((nextQuery, nextIncludeAdult, page = 1, provider, requestedType = mediaType) => {
+  const runSearch = useCallback((nextQuery, nextIncludeAdult, {
+    page = 1,
+    provider,
+    requestedType = mediaType,
+    cursor,
+    retryProvider
+  } = {}) => {
     const trimmedQuery = nextQuery.trim();
     if (!trimmedQuery) {
       cancelPendingWork();
@@ -59,6 +74,7 @@ export function useMediaSearch({ type = 'anime' } = {}) {
 
     const controller = new AbortController();
     const requestId = ++requestIdRef.current;
+    const isCombined = requestedType === 'all';
     requestRef.current = { controller, requestId };
     latestSubmittedQueryRef.current = trimmedQuery;
 
@@ -72,6 +88,7 @@ export function useMediaSearch({ type = 'anime' } = {}) {
         ...current,
         status: 'success',
         loadingPage: page,
+        loadingProvider: isCombined ? retryProvider ?? null : null,
         pageError: null
       }));
     }
@@ -81,7 +98,9 @@ export function useMediaSearch({ type = 'anime' } = {}) {
       query: trimmedQuery,
       page,
       includeAdult: nextIncludeAdult,
-      provider: provider ?? (requestedType === 'anime' ? undefined : 'tmdb'),
+      provider: isCombined ? undefined : provider ?? defaultProviderForType(requestedType),
+      cursor: isCombined ? cursor : undefined,
+      retryProvider: isCombined ? retryProvider : undefined,
       signal: controller.signal
     })
       .then((payload) => {
@@ -96,18 +115,25 @@ export function useMediaSearch({ type = 'anime' } = {}) {
               results: payload.results,
               source: payload.source,
               pagination: payload.pagination,
+              providerErrors: payload.providerErrors,
               error: null,
               loadingPage: null,
+              loadingProvider: null,
               pageError: null
             };
           }
+
+          const existingIds = new Set(current.results.map(mediaIdentity));
+          const appendedResults = payload.results.filter((result) => !existingIds.has(mediaIdentity(result)));
           return {
             ...current,
             status: 'success',
-            results: [...current.results, ...payload.results],
+            results: [...current.results, ...appendedResults],
             source: payload.source,
             pagination: payload.pagination,
+            providerErrors: payload.providerErrors,
             loadingPage: null,
+            loadingProvider: null,
             pageError: null
           };
         });
@@ -127,7 +153,8 @@ export function useMediaSearch({ type = 'anime' } = {}) {
             ...current,
             status: 'success',
             loadingPage: null,
-            pageError: { page, error }
+            loadingProvider: null,
+            pageError: { page, error, provider: isCombined ? retryProvider : undefined }
           };
         });
       });
@@ -149,7 +176,7 @@ export function useMediaSearch({ type = 'anime' } = {}) {
       ...emptySearchState(trimmedQuery),
       status: 'loading'
     });
-    runSearch(query, includeAdult, 1, undefined, nextType);
+    runSearch(query, includeAdult, { requestedType: nextType });
   }, [cancelPendingWork, includeAdult, mediaType, query, runSearch]);
 
   const changeQuery = useCallback((nextQuery) => {
@@ -168,28 +195,54 @@ export function useMediaSearch({ type = 'anime' } = {}) {
     });
     debounceRef.current = setTimeout(() => {
       debounceRef.current = null;
-      runSearch(nextQuery, includeAdult, 1);
+      runSearch(nextQuery, includeAdult);
     }, SEARCH_DEBOUNCE_MS);
   }, [cancelPendingWork, includeAdult, runSearch]);
 
   const submitSearch = useCallback(() => {
     cancelPendingWork();
-    runSearch(query, includeAdult, 1);
+    runSearch(query, includeAdult);
   }, [cancelPendingWork, includeAdult, query, runSearch]);
 
   const retrySearch = useCallback(() => {
-    runSearch(latestSubmittedQueryRef.current, includeAdult, 1);
+    runSearch(latestSubmittedQueryRef.current, includeAdult);
   }, [includeAdult, runSearch]);
 
   const loadMore = useCallback(() => {
     if (!state.pagination?.hasMore || state.loadingPage) return;
-    runSearch(latestSubmittedQueryRef.current, includeAdult, state.pagination.page + 1, state.source);
-  }, [includeAdult, runSearch, state.loadingPage, state.pagination, state.source]);
+    const nextPage = state.pagination.page + 1;
+    runSearch(latestSubmittedQueryRef.current, includeAdult, {
+      page: nextPage,
+      provider: state.source,
+      cursor: mediaType === 'all' ? state.pagination.continuation : undefined
+    });
+  }, [includeAdult, mediaType, runSearch, state.loadingPage, state.pagination, state.source]);
 
   const retryPage = useCallback(() => {
     if (!state.pageError?.page) return;
-    runSearch(latestSubmittedQueryRef.current, includeAdult, state.pageError.page, state.source);
-  }, [includeAdult, runSearch, state.pageError, state.source]);
+    if (mediaType === 'all' && state.pageError.provider) {
+      runSearch(latestSubmittedQueryRef.current, includeAdult, {
+        page: state.pageError.page,
+        cursor: state.pagination?.continuation,
+        retryProvider: state.pageError.provider
+      });
+      return;
+    }
+    runSearch(latestSubmittedQueryRef.current, includeAdult, {
+      page: state.pageError.page,
+      provider: state.source,
+      cursor: mediaType === 'all' ? state.pagination?.continuation : undefined
+    });
+  }, [includeAdult, mediaType, runSearch, state.pageError, state.pagination, state.source]);
+
+  const retryProvider = useCallback((provider) => {
+    if (mediaType !== 'all' || !state.pagination?.continuation || state.loadingPage) return;
+    runSearch(latestSubmittedQueryRef.current, includeAdult, {
+      page: state.pagination.page + 1,
+      cursor: state.pagination.continuation,
+      retryProvider: provider
+    });
+  }, [includeAdult, mediaType, runSearch, state.loadingPage, state.pagination]);
 
   const toggleIncludeAdult = useCallback((nextValue) => {
     setIncludeAdult(nextValue);
@@ -198,7 +251,7 @@ export function useMediaSearch({ type = 'anime' } = {}) {
       return;
     }
     cancelPendingWork();
-    runSearch(query, nextValue, 1);
+    runSearch(query, nextValue);
   }, [cancelPendingWork, query, runSearch]);
 
   useEffect(() => () => {
@@ -218,6 +271,7 @@ export function useMediaSearch({ type = 'anime' } = {}) {
     retrySearch,
     loadMore,
     retryPage,
+    retryProvider,
     isBusy: state.status === 'loading' || state.loadingPage !== null
   };
 }

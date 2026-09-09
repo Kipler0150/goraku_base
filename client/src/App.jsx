@@ -1,11 +1,22 @@
 import { useState } from 'react';
 import { useHealthCheck } from './hooks/useHealthCheck.js';
 import { useMediaSearch } from './hooks/useMediaSearch.js';
+import { mediaIdentity } from './mediaIdentity.js';
 import './styles.css';
 
 const TMDB_URL = 'https://www.themoviedb.org/';
 const TMDB_LOGO_URL = 'https://www.themoviedb.org/assets/2/v4/logos/primary-green.svg';
 const TMDB_NOTICE = 'This product uses the TMDB API but is not endorsed or certified by TMDB.';
+const ANILIST_URL = 'https://anilist.co/';
+const MYANIMELIST_URL = 'https://myanimelist.net/';
+const RAWG_URL = 'https://rawg.io/';
+
+const PROVIDERS = Object.freeze({
+  anilist: { label: 'AniList', url: ANILIST_URL },
+  myanimelist: { label: 'MyAnimeList', url: MYANIMELIST_URL },
+  tmdb: { label: 'TMDB', url: TMDB_URL },
+  rawg: { label: 'RAWG', url: RAWG_URL }
+});
 
 function ConnectionStatus({ status, error, onRetry }) {
   const isLoading = status === 'loading';
@@ -79,10 +90,16 @@ function formatMetadataCount(value, suffix, unavailableLabel = `${suffix} unavai
   return Number.isInteger(value) ? `${value} ${suffix}` : unavailableLabel;
 }
 
+function formatMetadataList(value, label) {
+  return Array.isArray(value) && value.length > 0 ? value.join(', ') : `${label} unavailable`;
+}
+
 const MEDIA_TYPE_LABELS = Object.freeze({
   anime: 'Anime',
   movie: 'Movies',
-  tv: 'TV'
+  tv: 'TV',
+  game: 'Games',
+  all: 'All'
 });
 
 function getMediaTypeLabel(type) {
@@ -90,7 +107,11 @@ function getMediaTypeLabel(type) {
 }
 
 function getMediaTypeNoun(type) {
-  return type === 'anime' ? 'anime' : type === 'movie' ? 'movies' : 'TV';
+  if (type === 'anime') return 'anime';
+  if (type === 'movie') return 'movies';
+  if (type === 'tv') return 'TV';
+  if (type === 'game') return 'games';
+  return 'all media';
 }
 
 function getCardFacts(media) {
@@ -101,6 +122,13 @@ function getCardFacts(media) {
     return [
       ['Seasons', formatMetadataCount(media.metadata?.seasonCount, 'Seasons')],
       ['Episodes', formatMetadataCount(media.metadata?.episodeCount, 'Episodes')]
+    ];
+  }
+  if (media.type === 'GAME') {
+    return [
+      ['Platforms', formatMetadataList(media.metadata?.platforms, 'Platforms')],
+      ['Developers', formatMetadataList(media.metadata?.developers, 'Developers')],
+      ['Publishers', formatMetadataList(media.metadata?.publishers, 'Publishers')]
     ];
   }
   return [
@@ -175,6 +203,134 @@ function SearchState({ children, tone = 'quiet', role }) {
   return <div className={`search-state search-state--${tone}`} role={role}>{children}</div>;
 }
 
+const COMBINED_GROUPS = Object.freeze([
+  { type: 'ANIME', label: 'Anime' },
+  { type: 'MOVIE', label: 'Movies' },
+  { type: 'TV', label: 'TV' },
+  { type: 'GAME', label: 'Games' }
+]);
+
+function getProviderLabel(provider) {
+  return PROVIDERS[provider]?.label ?? provider?.toUpperCase() ?? 'Provider';
+}
+
+function getCurrentProviders(search) {
+  const resultProviders = [...new Set(search.state.results.map((media) => media.provider))];
+  if (resultProviders.length > 0) return resultProviders;
+  if (search.state.source && search.state.source !== 'combined') return [search.state.source];
+  if (search.type === 'anime') return ['anilist', 'myanimelist'];
+  return [];
+}
+
+function ProviderAttribution({ search }) {
+  const providers = getCurrentProviders(search);
+  if (providers.length === 0) return `SEARCHING ${getMediaTypeLabel(search.type).toUpperCase()} CATALOG`;
+
+  if (providers.length === 1) {
+    const provider = providers[0];
+    return (
+      <a href={PROVIDERS[provider]?.url} target="_blank" rel="noreferrer">
+        UNOFFICIAL {getProviderLabel(provider).toUpperCase()} INTEGRATION
+      </a>
+    );
+  }
+
+  return (
+    <>
+      <span>UNOFFICIAL </span>
+      {providers.map((provider, index) => (
+        <span key={provider}>
+          {index > 0 && ' / '}
+          <a href={PROVIDERS[provider]?.url} target="_blank" rel="noreferrer">
+            {getProviderLabel(provider).toUpperCase()}
+          </a>
+        </span>
+      ))}
+      <span>{providers.length > 1 ? ' INTEGRATIONS' : ' INTEGRATION'}</span>
+    </>
+  );
+}
+
+function getCombinedGroups(results) {
+  return COMBINED_GROUPS
+    .map((group) => ({
+      ...group,
+      results: results.filter((media) => media.type === group.type)
+    }))
+    .filter((group) => group.results.length > 0);
+}
+
+function isRetryableProviderError(provider, pagination) {
+  if (!pagination?.continuation) return false;
+  // AniList errors covered by a successful MyAnimeList fallback are informational.
+  return !(provider === 'anilist' && pagination.providers?.myanimelist && !pagination.providers?.anilist);
+}
+
+function ProviderFailureNotices({ search, isBusy }) {
+  if (search.type !== 'all' || search.state.providerErrors.length === 0) return null;
+
+  return (
+    <aside className="provider-errors" role="alert" aria-label="Provider failures">
+      <p>Some provider lanes are unavailable. Successful results remain visible.</p>
+      <ul>
+        {search.state.providerErrors.map(({ provider }) => {
+          const label = getProviderLabel(provider);
+          const canRetry = isRetryableProviderError(provider, search.state.pagination);
+          const isRetrying = search.state.loadingProvider === provider;
+          return (
+            <li key={provider}>
+              <span>{label} is temporarily unavailable.</span>
+              {canRetry ? (
+                <button
+                  type="button"
+                  className="search-action search-action--secondary"
+                  onClick={() => search.retryProvider(provider)}
+                  disabled={isBusy}
+                >
+                  {isRetrying ? `Retrying ${label}…` : `Retry ${label} search`}
+                </button>
+              ) : (
+                <span className="provider-errors__detail">Anime results are using MyAnimeList.</span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </aside>
+  );
+}
+
+function MediaGrid({ results, label }) {
+  return (
+    <ul className="media-grid" aria-label={`${label} search results`}>
+      {results.map((media) => (
+        <li key={mediaIdentity(media)}>
+          <MediaCard media={media} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function CombinedResults({ results }) {
+  return (
+    <div className="combined-results">
+      {getCombinedGroups(results).map((group) => {
+        const headingId = `combined-${group.type.toLowerCase()}-title`;
+        return (
+          <section className="combined-group" key={group.type} aria-labelledby={headingId}>
+            <div className="combined-group__heading">
+              <p className="section-index">COMBINED / {group.label.toUpperCase()}</p>
+              <h3 id={headingId}>{group.label}</h3>
+            </div>
+            <MediaGrid results={group.results} label={group.label} />
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
 function SearchResults({ search }) {
   const { state, isBusy, retrySearch, loadMore, retryPage } = search;
   const typeLabel = getMediaTypeLabel(search.type);
@@ -219,6 +375,8 @@ function SearchResults({ search }) {
         </SearchState>
       )}
 
+      {state.status === 'success' && <ProviderFailureNotices search={search} isBusy={isBusy} />}
+
       {state.status === 'success' && state.results.length === 0 && (
         <SearchState>
           <span className="state-mark" aria-hidden="true">0</span>
@@ -229,13 +387,11 @@ function SearchResults({ search }) {
 
       {state.status === 'success' && state.results.length > 0 && (
         <>
-          <ul className="media-grid" aria-label={`${typeLabel} search results`}>
-            {state.results.map((media) => (
-              <li key={media.id}>
-                <MediaCard media={media} />
-              </li>
-            ))}
-          </ul>
+          {search.type === 'all' ? (
+            <CombinedResults results={state.results} />
+          ) : (
+            <MediaGrid results={state.results} label={typeLabel} />
+          )}
 
           {state.pageError && (
             <div className="page-error" role="alert">
@@ -268,15 +424,6 @@ function SearchResults({ search }) {
 function MediaSearch() {
   const search = useMediaSearch({ type: 'anime' });
   const typeLabel = getMediaTypeLabel(search.type);
-  const attribution = search.state.source === 'myanimelist'
-    ? 'UNOFFICIAL MYANIMELIST INTEGRATION'
-    : search.state.source === 'anilist'
-      ? 'UNOFFICIAL ANILIST INTEGRATION'
-      : search.state.source === 'tmdb'
-        ? 'UNOFFICIAL TMDB INTEGRATION'
-        : search.type === 'anime'
-          ? 'UNOFFICIAL ANILIST / MYANIMELIST INTEGRATION'
-          : `SEARCHING ${typeLabel.toUpperCase()} CATALOG`;
 
   return (
     <section className="search-section" id="media-search" aria-labelledby="media-search-title">
@@ -285,7 +432,7 @@ function MediaSearch() {
           <h2 id="media-search-title">Search the signal.</h2>
           <p className="section-index">DISCOVERY / {typeLabel.toUpperCase()}</p>
         </div>
-        <p className="search-attribution">{attribution}</p>
+        <p className="search-attribution"><ProviderAttribution search={search} /></p>
       </div>
 
       <form className="search-form" onSubmit={(event) => { event.preventDefault(); search.submitSearch(); }}>
@@ -300,6 +447,8 @@ function MediaSearch() {
             <option value="anime">Anime</option>
             <option value="movie">Movies</option>
             <option value="tv">TV</option>
+            <option value="game">Games</option>
+            <option value="all">All</option>
           </select>
         </div>
         <label className="search-form__label" htmlFor="media-query">Search {getMediaTypeNoun(search.type)} by title</label>
@@ -309,7 +458,15 @@ function MediaSearch() {
             type="search"
             value={search.query}
             onChange={(event) => search.changeQuery(event.target.value)}
-            placeholder={search.type === 'anime' ? 'Try Fullmetal Alchemist' : search.type === 'movie' ? 'Try Arrival' : 'Try Severance'}
+            placeholder={search.type === 'anime'
+              ? 'Try Fullmetal Alchemist'
+              : search.type === 'movie'
+                ? 'Try Arrival'
+                : search.type === 'tv'
+                  ? 'Try Severance'
+                  : search.type === 'game'
+                    ? 'Try Zelda'
+                    : 'Try a title across media'}
             autoComplete="off"
             aria-describedby="media-query-help"
             aria-controls="media-results"
@@ -358,7 +515,7 @@ export default function App() {
           <div>
             <div className="page-code" aria-label="Page 003: media discovery">PAGE 003 / MEDIA DISCOVERY</div>
             <p className="intro-copy">
-              Search normalized anime, movie, and TV metadata through the Goraku Base boundary. The browser talks to Express; each provider stays behind the signal.
+              Search normalized anime, movie, TV, and game metadata through the Goraku Base boundary. Combined Search keeps each provider lane visible behind the signal.
             </p>
           </div>
         </section>
@@ -399,14 +556,14 @@ export default function App() {
               <p className="section-index">ROADMAP / QUEUED</p>
             </div>
           </div>
-          <p>Anime, movie, and TV discovery are live through Express. Accounts, personal tracking, and additional providers remain queued for later phases.</p>
+          <p>Anime, movie, TV, game, and Combined Search discovery are live through Express. Accounts, personal tracking, and additional providers remain queued for later phases.</p>
         </section>
       </main>
 
       <footer className="site-footer" id="credits" aria-labelledby="credits-title">
         <div className="site-footer__identity">
-          <span>GORAKU BASE / PHASE 3</span>
-          <span>ANI LIST + MYANIMELIST + TMDB / UNOFFICIAL</span>
+          <span>GORAKU BASE / PHASE 4</span>
+          <span>ANILIST + MYANIMELIST + TMDB + RAWG / UNOFFICIAL</span>
         </div>
         <div className="tmdb-credits">
           <div>
@@ -418,6 +575,11 @@ export default function App() {
               <img className="tmdb-credits__logo" src={TMDB_LOGO_URL} alt="TMDB" width="128" height="36" />
             </a>
             <p>{TMDB_NOTICE}</p>
+            <nav className="provider-credits" aria-label="Provider credits">
+              <a href={ANILIST_URL} target="_blank" rel="noreferrer">AniList</a>
+              <a href={MYANIMELIST_URL} target="_blank" rel="noreferrer">MyAnimeList</a>
+              <a href={RAWG_URL} target="_blank" rel="noreferrer">RAWG</a>
+            </nav>
           </div>
         </div>
       </footer>
