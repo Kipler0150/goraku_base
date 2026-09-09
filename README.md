@@ -4,7 +4,7 @@ An entertainment bookmarking and tracking application for anime, movies, televis
 
 ## Project status
 
-Phase 1: complete runnable foundation. Phase 2: complete anime search through Express with unofficial AniList integration and an optional unofficial MyAnimeList availability fallback, plus normalized MediaCards, pagination, loading/error states, and a temporary local adult-content filter. Phase 3: complete movie and TV title search through the server-side TMDB adapter with the same generic search surface, server-only configuration, attribution, and credential-free repository verification. Phase 4: complete TheGamesDB-primary game search with RAWG availability fallback and Combined Search with independent Provider Failures, cursor pagination, server-only configuration, attribution, and deterministic verification. Manga, authentication, persistence, personal ratings, and library features remain planned.
+Phase 1: complete runnable foundation. Phase 2: complete anime search through Express with unofficial AniList integration and an optional unofficial MyAnimeList availability fallback, plus normalized MediaCards, pagination, loading/error states, and a temporary local adult-content filter. Phase 3: complete movie and TV title search through the server-side TMDB adapter with the same generic search surface, server-only configuration, attribution, and credential-free repository verification. Phase 4: complete TheGamesDB-primary game search with RAWG availability fallback and Combined Search with independent Provider Failures, cursor pagination, server-only configuration, attribution, and deterministic verification. Phase 5.1-5.3: complete PostgreSQL schema/migrations, local email/password authentication, seven-day server-managed Sessions, secure cookies, mutation Origin validation, and authenticated User context. Library CRUD, Google authentication, and account recovery remain planned.
 
 ## Portfolio focus
 
@@ -55,6 +55,8 @@ Open <http://localhost:5173>; the container client still calls `/api/health` rel
 Compose also starts a persistent PostgreSQL 16 service as `postgres`. Its default local connection is available to the server as `DATABASE_URL`; run `docker compose exec server npm run db:migrate` after the database reports healthy. Native migration runs use the server-only `DATABASE_URL` in `.env.local` (the placeholder is documented in `.env.example` and `server/.env.example`).
 
 PostgreSQL migration integration tests require the separate `goraku_test` database: set `TEST_DATABASE_URL` to that database URL and run `npm run test:integration`. The test refuses other database names and resets only that dedicated test database.
+
+Local authentication is available when the server has a migrated `DATABASE_URL`. Use `POST /api/auth/register` or `POST /api/auth/login` with `{ "email": "...", "password": "..." }`; the server sets an HTTP-only `goraku_session` cookie. `GET /api/auth/me` reads the current User from that Session, and `POST /api/auth/logout` revokes only the current Session. Mutation requests must send the exact configured `APP_ORIGIN` (default `http://localhost:5173`). Library routes are the next Phase 5 slice.
 
 For a background verification run, use `docker compose up --build -d`, confirm both services with `docker compose ps`, check `curl.exe http://localhost:3001/api/health` and `curl.exe http://localhost:5173/api/health`, then stop everything with `docker compose down`. Compose is a local development path, not a production deployment recipe.
 

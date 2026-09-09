@@ -1,4 +1,10 @@
 import express from 'express';
+import { createAuthService } from './auth.js';
+import {
+  createAuthRouter,
+  createMutationOriginMiddleware,
+  DEFAULT_APP_ORIGIN
+} from './auth-http.js';
 import { createAniListAdapter } from './providers/anilist.js';
 import { createMyAnimeListAdapter } from './providers/myanimelist.js';
 import { createTMDBAdapter } from './providers/tmdb.js';
@@ -161,6 +167,10 @@ function combinedFailureResponse(response, type) {
 
 export function createApp({
   enableTestErrorRoute = false,
+  databasePool = null,
+  authService = databasePool ? createAuthService({ pool: databasePool }) : null,
+  appOrigin = process.env.APP_ORIGIN ?? DEFAULT_APP_ORIGIN,
+  secureCookies = process.env.NODE_ENV === 'production',
   anilistAdapter = createAniListAdapter(),
   myanimelistAdapter = createMyAnimeListAdapter(),
   tmdbAdapter = createTMDBAdapter(),
@@ -171,7 +181,10 @@ export function createApp({
   const mediaSearch = createMediaSearchService({ anilistAdapter, myanimelistAdapter, tmdbAdapter, thegamesdbAdapter, rawgAdapter });
 
   app.disable('x-powered-by');
+  app.use('/api', createMutationOriginMiddleware({ appOrigin }));
   app.use(express.json());
+
+  app.use('/api/auth', createAuthRouter({ authService, secureCookies }));
 
   app.get('/api/health', (_request, response) => {
     response.status(200).json({
@@ -219,6 +232,15 @@ export function createApp({
   });
 
   app.use((error, _request, response, _next) => {
+    if (error?.type === 'entity.parse.failed' || (error instanceof SyntaxError && error.status === 400)) {
+      sendErrorResponse(response, 400, {
+        code: 'VALIDATION_ERROR',
+        message: 'The request body must contain valid JSON.',
+        details: []
+      });
+      return;
+    }
+
     if (error.status === 404) {
       response.status(404).json({ error: NOT_FOUND_ERROR });
       return;

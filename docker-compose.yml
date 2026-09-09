@@ -21,6 +21,7 @@ services:
       dockerfile: docker/server.Dockerfile
     environment:
       PORT: 3001
+      APP_ORIGIN: ${APP_ORIGIN:-http://localhost:5173}
       DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-goraku}:${POSTGRES_PASSWORD:-goraku_dev}@postgres:5432/${POSTGRES_DB:-goraku}}
     depends_on:
       postgres:
