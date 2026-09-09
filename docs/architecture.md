@@ -1,6 +1,6 @@
 # Goraku Base architecture and phased plan
 
-Status: Phase 1 foundation and Phase 2 anime search complete; later phases remain planned. The executable scope and acceptance criteria are recorded in the [Phase 1 specification](../.scratch/phase-1-foundation/spec.md), [Phase 2 anime search specification](../.scratch/phase-2-anilist-search/spec.md), and [Phase 2 anime search walkthrough](phase-2-walkthrough.md).
+Status: Phases 1-4 are complete. The executable scope and acceptance criteria are recorded in the [Phase 1 specification](../.scratch/phase-1-foundation/spec.md), [Phase 2 anime search specification](../.scratch/phase-2-anilist-search/spec.md), [Phase 2 anime search walkthrough](phase-2-walkthrough.md), [Phase 3 TMDB search specification](../.scratch/phase-3-tmdb-search/spec.md), and [Phase 4 specification](../.scratch/phase-4-rawg-combined-search/spec.md).
 
 ## Purpose and scope
 

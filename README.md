@@ -4,7 +4,7 @@ An entertainment bookmarking and tracking application for anime, movies, televis
 
 ## Project status
 
-Phase 1: complete runnable foundation. Phase 2: complete anime search through Express with unofficial AniList integration and an optional unofficial MyAnimeList availability fallback, plus normalized MediaCards, pagination, loading/error states, and a temporary local adult-content filter. Phase 3: complete movie and TV title search through the server-side TMDB adapter with the same generic search surface, server-only configuration, attribution, and credential-free repository verification. Manga, RAWG, authentication, persistence, personal ratings, and library features remain planned.
+Phase 1: complete runnable foundation. Phase 2: complete anime search through Express with unofficial AniList integration and an optional unofficial MyAnimeList availability fallback, plus normalized MediaCards, pagination, loading/error states, and a temporary local adult-content filter. Phase 3: complete movie and TV title search through the server-side TMDB adapter with the same generic search surface, server-only configuration, attribution, and credential-free repository verification. Phase 4: complete RAWG game search and Combined Search with independent Provider Failures, cursor pagination, server-only configuration, attribution, and deterministic verification. Manga, authentication, persistence, personal ratings, and library features remain planned.
 
 ## Portfolio focus
 
@@ -75,5 +75,7 @@ Media details, a personal library, favorites, ratings, notes, tags, collections,
 - [Phase 2 anime search walkthrough](docs/phase-2-walkthrough.md)
 - [Phase 3 TMDB movie and TV search specification](.scratch/phase-3-tmdb-search/spec.md)
 - [Phase 3 TMDB search walkthrough](docs/phase-3-walkthrough.md)
+- [Phase 4 RAWG and Combined Search specification](.scratch/phase-4-rawg-combined-search/spec.md)
+- [Phase 4 RAWG and Combined Search walkthrough](docs/phase-4-walkthrough.md)
 
 Future deployment documentation remains intentionally separate and is not claimed as verified in Phase 1.
