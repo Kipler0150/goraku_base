@@ -27,7 +27,7 @@ function emptySearchState(query = '') {
 
 function defaultProviderForType(type) {
   if (type === 'anime') return undefined;
-  if (type === 'game') return 'rawg';
+  if (type === 'game') return undefined;
   return 'tmdb';
 }
 

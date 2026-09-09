@@ -40,6 +40,12 @@ describe('typed media search API', () => {
       pagination: { page: 1, perPage: 12, hasMore: false },
       providerErrors: []
     })).toBe(true);
+    expect(isValidMediaSearchPayload({
+      results: [],
+      source: 'thegamesdb',
+      pagination: { page: 1, perPage: 20, hasMore: false },
+      providerErrors: []
+    })).toBe(true);
 
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,

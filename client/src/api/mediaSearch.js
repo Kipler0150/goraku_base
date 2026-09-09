@@ -3,7 +3,7 @@ import { requestJson } from './request.js';
 const SEARCH_PAGE_LIMIT = 100;
 const SEARCH_PER_PAGE_LIMIT = 24;
 const SEARCH_TYPES = new Set(['anime', 'movie', 'tv', 'game', 'all']);
-const SEARCH_PROVIDERS = new Set(['anilist', 'myanimelist', 'tmdb', 'rawg']);
+const SEARCH_PROVIDERS = new Set(['anilist', 'myanimelist', 'tmdb', 'thegamesdb', 'rawg']);
 
 function isValidProviderPagination(pagination) {
   return Boolean(

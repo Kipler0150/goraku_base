@@ -41,9 +41,9 @@ function media({ id, title, type, provider }) {
   };
 }
 
-function gameMedia(id, title, metadata) {
+function gameMedia(id, title, metadata, provider = 'rawg') {
   return {
-    ...media({ id, title, type: 'GAME', provider: 'rawg' }),
+    ...media({ id, title, type: 'GAME', provider }),
     metadata
   };
 }
@@ -81,9 +81,9 @@ describe('Games and Combined Search experience', () => {
     fetch.mockImplementation((url) => {
       if (url === '/api/health') return Promise.resolve(healthResponse());
       return Promise.resolve(searchResponse({
-        results: [gameMedia('1', 'Unknown Game', { platforms: [], developers: [], publishers: [] })],
-        source: 'rawg',
-        pagination: { page: 1, perPage: 12, hasMore: false },
+        results: [gameMedia('1', 'Unknown Game', { platforms: [], developers: [], publishers: [] }, 'thegamesdb')],
+        source: 'thegamesdb',
+        pagination: { page: 1, perPage: 20, hasMore: false },
         providerErrors: []
       }));
     });
@@ -103,7 +103,7 @@ describe('Games and Combined Search experience', () => {
     expect(screen.getByText('Platforms unavailable')).toBeInTheDocument();
     expect(screen.getByText('Developers unavailable')).toBeInTheDocument();
     expect(screen.getByText('Publishers unavailable')).toBeInTheDocument();
-    expect(screen.getAllByRole('link', { name: 'RAWG' }).every((link) => link.getAttribute('href') === 'https://rawg.io/')).toBe(true);
+    expect(screen.getAllByRole('link', { name: /TheGamesDB/i }).every((link) => link.getAttribute('href') === 'https://thegamesdb.net/')).toBe(true);
   });
 
   it('groups Combined Search results and keeps successful lanes visible after a safe provider failure', async () => {

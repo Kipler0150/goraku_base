@@ -2,6 +2,7 @@ import express from 'express';
 import { createAniListAdapter } from './providers/anilist.js';
 import { createMyAnimeListAdapter } from './providers/myanimelist.js';
 import { createTMDBAdapter } from './providers/tmdb.js';
+import { createTheGamesDBAdapter } from './providers/thegamesdb.js';
 import { createRAWGAdapter } from './providers/rawg.js';
 import {
   createMediaSearchService,
@@ -98,7 +99,7 @@ function validateMediaSearchQuery(query) {
     } else {
       const providers = searchQuery.type === 'anime'
         ? ['anilist', 'myanimelist']
-        : searchQuery.type === 'game' ? ['rawg'] : ['tmdb'];
+        : searchQuery.type === 'game' ? ['thegamesdb', 'rawg'] : ['tmdb'];
       if (!hasSingleValue('provider') || !providers.includes(searchQuery.provider)) {
         details.push({ field: 'provider', message: `provider must be ${providers.join(' or ')}.` });
       } else {
@@ -122,8 +123,8 @@ function validateMediaSearchQuery(query) {
   if (Object.hasOwn(searchQuery, 'retryProvider')) {
     if (searchQuery.type !== 'all') {
       details.push({ field: 'retryProvider', message: 'retryProvider is only supported for type "all".' });
-    } else if (!hasSingleValue('retryProvider') || !['anilist', 'myanimelist', 'tmdb', 'rawg'].includes(searchQuery.retryProvider)) {
-      details.push({ field: 'retryProvider', message: 'retryProvider must be anilist, myanimelist, tmdb, or rawg.' });
+    } else if (!hasSingleValue('retryProvider') || !['anilist', 'myanimelist', 'tmdb', 'thegamesdb', 'rawg'].includes(searchQuery.retryProvider)) {
+      details.push({ field: 'retryProvider', message: 'retryProvider must be anilist, myanimelist, tmdb, thegamesdb, or rawg.' });
     } else {
       retryProvider = searchQuery.retryProvider;
     }
@@ -163,10 +164,11 @@ export function createApp({
   anilistAdapter = createAniListAdapter(),
   myanimelistAdapter = createMyAnimeListAdapter(),
   tmdbAdapter = createTMDBAdapter(),
+  thegamesdbAdapter = createTheGamesDBAdapter(),
   rawgAdapter = createRAWGAdapter()
 } = {}) {
   const app = express();
-  const mediaSearch = createMediaSearchService({ anilistAdapter, myanimelistAdapter, tmdbAdapter, rawgAdapter });
+  const mediaSearch = createMediaSearchService({ anilistAdapter, myanimelistAdapter, tmdbAdapter, thegamesdbAdapter, rawgAdapter });
 
   app.disable('x-powered-by');
   app.use(express.json());
@@ -198,7 +200,7 @@ export function createApp({
         combinedFailureResponse(response, error.mediaType ?? validated.type);
         return;
       }
-      const defaultProvider = validated.type === 'anime' ? 'anilist' : validated.type === 'game' ? 'rawg' : 'tmdb';
+      const defaultProvider = validated.type === 'anime' ? 'anilist' : validated.type === 'game' ? 'thegamesdb' : 'tmdb';
       providerFailureResponse(response, error, error?.provider ?? validated.provider ?? defaultProvider);
     }
   });

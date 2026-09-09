@@ -4,11 +4,11 @@ An entertainment bookmarking and tracking application for anime, movies, televis
 
 ## Project status
 
-Phase 1: complete runnable foundation. Phase 2: complete anime search through Express with unofficial AniList integration and an optional unofficial MyAnimeList availability fallback, plus normalized MediaCards, pagination, loading/error states, and a temporary local adult-content filter. Phase 3: complete movie and TV title search through the server-side TMDB adapter with the same generic search surface, server-only configuration, attribution, and credential-free repository verification. Phase 4: complete RAWG game search and Combined Search with independent Provider Failures, cursor pagination, server-only configuration, attribution, and deterministic verification. Manga, authentication, persistence, personal ratings, and library features remain planned.
+Phase 1: complete runnable foundation. Phase 2: complete anime search through Express with unofficial AniList integration and an optional unofficial MyAnimeList availability fallback, plus normalized MediaCards, pagination, loading/error states, and a temporary local adult-content filter. Phase 3: complete movie and TV title search through the server-side TMDB adapter with the same generic search surface, server-only configuration, attribution, and credential-free repository verification. Phase 4: complete TheGamesDB-primary game search with RAWG availability fallback and Combined Search with independent Provider Failures, cursor pagination, server-only configuration, attribution, and deterministic verification. Manga, authentication, persistence, personal ratings, and library features remain planned.
 
 ## Portfolio focus
 
-Goraku Base will expose an Express REST API consumed by a React frontend. The backend will aggregate and normalize AniList, TMDB, and RAWG metadata while PostgreSQL stores user-owned library information. The API will demonstrate HTTP semantics, validation, consistent errors, pagination, authentication, ownership authorization, caching, and rate-limit handling.
+Goraku Base will expose an Express REST API consumed by a React frontend. The backend will aggregate and normalize AniList, TMDB, TheGamesDB, and RAWG metadata while PostgreSQL stores user-owned library information. The API will demonstrate HTTP semantics, validation, consistent errors, pagination, authentication, ownership authorization, caching, and rate-limit handling.
 
 ## Stack
 
@@ -28,9 +28,9 @@ npm run dev
 
 Open <http://localhost:5173>. The client proxies its relative `/api` request to Express on port 3001. Stop both development processes with Ctrl+C.
 
-The AniList search path needs no credential. To enable the optional MyAnimeList fallback, add the server-only `MAL_CLIENT_ID` to the root `.env.local` file (copy `.env.example` as a starting point) or set it in the shell before starting the server. Movie and TV search likewise accepts the optional server-only `TMDB_ACCESS_TOKEN`; `TMDB_IMAGE_BASE_URL` can override the approved image host and defaults to `https://image.tmdb.org/t/p`. Game search and the Games lane in Combined Search accept the optional server-only `RAWG_API_KEY`. The server loads `.env.local` at startup, and shell values take precedence. No MyAnimeList OAuth account, client secret, or user library access is required for this read-only search slice. The browser never receives any provider credential or image configuration value.
+The AniList search path needs no credential. To enable the optional MyAnimeList fallback, add the server-only `MAL_CLIENT_ID` to the root `.env.local` file (copy `.env.example` as a starting point) or set it in the shell before starting the server. Movie and TV search likewise accepts the optional server-only `TMDB_ACCESS_TOKEN`; `TMDB_IMAGE_BASE_URL` can override the approved image host and defaults to `https://image.tmdb.org/t/p`. Game search and the Games lane in Combined Search use the optional server-only `THEGAMESDB_API_KEY` first, then `RAWG_API_KEY` when TheGamesDB is unavailable. The server loads `.env.local` at startup, and shell values take precedence. No MyAnimeList OAuth account, client secret, or user library access is required for this read-only search slice. The browser never receives any provider credential or image configuration value.
 
-Normal startup and the test suite are credential-free: without `TMDB_ACCESS_TOKEN`, movie and TV searches return a safe unavailable-provider response, and without `RAWG_API_KEY`, game and Combined Search requests return safe RAWG-unavailable results while other successful lanes remain visible. Mocked tests never call external providers. Copy the placeholder values from `.env.example` or `server/.env.example`; never commit a populated environment file or put a provider key in `client/.env*`.
+Normal startup and the test suite are credential-free: without `TMDB_ACCESS_TOKEN`, movie and TV searches return a safe unavailable-provider response, and without both game keys, game and Combined Search requests return safe game-provider-unavailable results while other successful lanes remain visible. Mocked tests never call external providers. Copy the placeholder values from `.env.example` or `server/.env.example`; never commit a populated environment file or put a provider key in `client/.env*`.
 
 Useful commands:
 
@@ -75,7 +75,7 @@ Media details, a personal library, favorites, ratings, notes, tags, collections,
 - [Phase 2 anime search walkthrough](docs/phase-2-walkthrough.md)
 - [Phase 3 TMDB movie and TV search specification](.scratch/phase-3-tmdb-search/spec.md)
 - [Phase 3 TMDB search walkthrough](docs/phase-3-walkthrough.md)
-- [Phase 4 RAWG and Combined Search specification](.scratch/phase-4-rawg-combined-search/spec.md)
-- [Phase 4 RAWG and Combined Search walkthrough](docs/phase-4-walkthrough.md)
+- [Phase 4 TheGamesDB, RAWG fallback, and Combined Search specification](.scratch/phase-4-rawg-combined-search/spec.md)
+- [Phase 4 game providers and Combined Search walkthrough](docs/phase-4-walkthrough.md)
 
 Future deployment documentation remains intentionally separate and is not claimed as verified in Phase 1.

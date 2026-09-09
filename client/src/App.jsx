@@ -9,15 +9,17 @@ const TMDB_LOGO_URL = 'https://www.themoviedb.org/assets/2/v4/logos/primary-gree
 const TMDB_NOTICE = 'This product uses the TMDB API but is not endorsed or certified by TMDB.';
 const ANILIST_URL = 'https://anilist.co/';
 const MYANIMELIST_URL = 'https://myanimelist.net/';
+const THEGAMESDB_URL = 'https://thegamesdb.net/';
 const RAWG_URL = 'https://rawg.io/';
 
 const PROVIDERS = Object.freeze({
   anilist: { label: 'AniList', url: ANILIST_URL },
   myanimelist: { label: 'MyAnimeList', url: MYANIMELIST_URL },
   tmdb: { label: 'TMDB', url: TMDB_URL },
+  thegamesdb: { label: 'TheGamesDB', url: THEGAMESDB_URL },
   rawg: { label: 'RAWG', url: RAWG_URL }
 });
-const PROVIDER_ORDER = Object.freeze(['anilist', 'myanimelist', 'tmdb', 'rawg']);
+const PROVIDER_ORDER = Object.freeze(['anilist', 'myanimelist', 'tmdb', 'thegamesdb', 'rawg']);
 
 function ConnectionStatus({ status, error, onRetry }) {
   const isLoading = status === 'loading';
@@ -267,7 +269,10 @@ function getCombinedGroups(results) {
 function isRetryableProviderError(provider, pagination) {
   if (!pagination?.continuation) return false;
   // AniList errors covered by a successful MyAnimeList fallback are informational.
-  return !(provider === 'anilist' && pagination.providers?.myanimelist && !pagination.providers?.anilist);
+  if (provider === 'anilist' && pagination.providers?.myanimelist && !pagination.providers?.anilist) return false;
+  // TheGamesDB errors covered by a successful RAWG fallback are informational.
+  if (provider === 'thegamesdb' && pagination.providers?.rawg && !pagination.providers?.thegamesdb) return false;
+  return true;
 }
 
 function ProviderFailureNotices({ search, isBusy }) {
@@ -294,7 +299,9 @@ function ProviderFailureNotices({ search, isBusy }) {
                   {isRetrying ? `Retrying ${label}…` : `Retry ${label} search`}
                 </button>
               ) : (
-                <span className="provider-errors__detail">Anime results are using MyAnimeList.</span>
+                <span className="provider-errors__detail">
+                  {provider === 'anilist' ? 'Anime results are using MyAnimeList.' : 'Game results are using RAWG.'}
+                </span>
               )}
             </li>
           );
@@ -567,7 +574,7 @@ export default function App() {
       <footer className="site-footer" id="credits" aria-labelledby="credits-title">
         <div className="site-footer__identity">
           <span>GORAKU BASE / PHASE 4</span>
-          <span>ANILIST + MYANIMELIST + TMDB + RAWG / UNOFFICIAL</span>
+          <span>ANILIST + MYANIMELIST + TMDB + THEGAMESDB + RAWG / UNOFFICIAL</span>
         </div>
         <div className="tmdb-credits">
           <div>
@@ -582,6 +589,7 @@ export default function App() {
             <nav className="provider-credits" aria-label="Provider credits">
               <a href={ANILIST_URL} target="_blank" rel="noreferrer">AniList</a>
               <a href={MYANIMELIST_URL} target="_blank" rel="noreferrer">MyAnimeList</a>
+              <a href={THEGAMESDB_URL} target="_blank" rel="noreferrer">TheGamesDB</a>
               <a href={RAWG_URL} target="_blank" rel="noreferrer">RAWG</a>
             </nav>
           </div>

@@ -44,7 +44,7 @@ describe('local environment loading', () => {
     assert.doesNotMatch(examples[2], /TMDB_ACCESS_TOKEN|TMDB_IMAGE_BASE_URL/);
   });
 
-  it('documents blank server-only RAWG configuration without exposing it to the client', async () => {
+  it('documents blank server-only game provider configuration without exposing it to the client', async () => {
     const examples = await Promise.all([
       readFile('.env.example', 'utf8'),
       readFile('server/.env.example', 'utf8'),
@@ -54,11 +54,13 @@ describe('local environment loading', () => {
     ]);
 
     for (const example of examples.slice(0, 2)) {
+      assert.match(example, /^# THEGAMESDB_API_KEY=$/m);
+      assert.doesNotMatch(example, /^(?!\s*#)\s*THEGAMESDB_API_KEY=/m);
       assert.match(example, /^# RAWG_API_KEY=$/m);
       assert.doesNotMatch(example, /^(?!\s*#)\s*RAWG_API_KEY=/m);
     }
     for (const clientFile of examples.slice(2)) {
-      assert.doesNotMatch(clientFile, /RAWG_API_KEY/);
+      assert.doesNotMatch(clientFile, /THEGAMESDB_API_KEY|RAWG_API_KEY/);
     }
   });
 });

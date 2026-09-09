@@ -428,10 +428,87 @@ describe('typed media search HTTP API', () => {
 
     assert.equal(response.status, 400);
     assert.deepEqual(response.body.error.details, [
-      { field: 'provider', message: 'provider must be rawg.' }
+      { field: 'provider', message: 'provider must be thegamesdb or rawg.' }
     ]);
     assert.equal(rawg.calls.length, 0);
     assert.equal(tmdb.calls.length, 0);
+  });
+
+  it('uses TheGamesDB by default and falls back to RAWG only when it is unavailable', async () => {
+    const thegamesdb = {
+      calls: [],
+      async searchMedia(options) {
+        this.calls.push(options);
+        throw new SharedProviderError(SHARED_PROVIDER_ERROR_CODES.UNAVAILABLE, 'private TGDB diagnostic');
+      }
+    };
+    const rawg = createMediaMockAdapter();
+    const app = createApp({ thegamesdbAdapter: thegamesdb, rawgAdapter: rawg.adapter });
+
+    const response = await request(app).get('/api/media/search?type=game&q=zelda');
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.source, 'rawg');
+    assert.deepEqual(response.body.providerErrors, [{
+      provider: 'thegamesdb',
+      code: 'PROVIDER_UNAVAILABLE',
+      message: 'TheGamesDB is currently unavailable.'
+    }]);
+    assert.equal(thegamesdb.calls.length, 1);
+    assert.equal(rawg.calls.length, 1);
+  });
+
+  it('keeps explicit TheGamesDB and RAWG provider pins strict', async () => {
+    const thegamesdb = createMediaMockAdapter();
+    const rawg = createMediaMockAdapter();
+    const app = createApp({ thegamesdbAdapter: thegamesdb.adapter, rawgAdapter: rawg.adapter });
+
+    const tgdbResponse = await request(app).get('/api/media/search?type=game&q=zelda&provider=thegamesdb');
+    const rawgResponse = await request(app).get('/api/media/search?type=game&q=zelda&provider=rawg');
+
+    assert.equal(tgdbResponse.status, 200);
+    assert.equal(tgdbResponse.body.source, 'thegamesdb');
+    assert.equal(rawgResponse.status, 200);
+    assert.equal(rawgResponse.body.source, 'rawg');
+    assert.equal(thegamesdb.calls.length, 1);
+    assert.equal(rawg.calls.length, 1);
+  });
+
+  it('does not fall back from TheGamesDB rate limits or malformed provider responses', async () => {
+    for (const error of [
+      new SharedProviderError(SHARED_PROVIDER_ERROR_CODES.RATE_LIMITED),
+      new SharedProviderError(SHARED_PROVIDER_ERROR_CODES.INVALID_RESPONSE)
+    ]) {
+      const rawg = createMediaMockAdapter();
+      const app = createApp({
+        thegamesdbAdapter: { async searchMedia() { throw error; } },
+        rawgAdapter: rawg.adapter
+      });
+
+      const response = await request(app).get('/api/media/search?type=game&q=zelda');
+
+      assert.equal(response.status, 503);
+      assert.equal(response.body.error.code, error.code);
+      assert.equal(rawg.calls.length, 0);
+    }
+  });
+
+  it('returns the final RAWG provider error when both game providers are unavailable', async () => {
+    const app = createApp({
+      thegamesdbAdapter: { async searchMedia() { throw new SharedProviderError(SHARED_PROVIDER_ERROR_CODES.UNAVAILABLE); } },
+      rawgAdapter: { async searchMedia() { throw new SharedProviderError(SHARED_PROVIDER_ERROR_CODES.TIMEOUT); } }
+    });
+
+    const response = await request(app).get('/api/media/search?type=game&q=zelda');
+
+    assert.equal(response.status, 503);
+    assert.deepEqual(response.body, {
+      error: {
+        code: 'PROVIDER_TIMEOUT',
+        message: 'RAWG did not respond within the allowed time.',
+        details: []
+      }
+    });
   });
 
   it('accepts movie and TV requests through the TMDB adapter boundary', async () => {
@@ -599,25 +676,31 @@ describe('combined media search HTTP API', () => {
         return { results: [options.type], pagination: { page: options.page, perPage: 20, hasMore: false } };
       }
     };
+    const thegamesdb = {
+      async searchMedia(options) {
+        await waitForAllLanes('thegamesdb');
+        return { results: ['game'], pagination: { page: options.page, perPage: 20, hasMore: true } };
+      }
+    };
     const rawg = {
       async searchMedia(options) {
         await waitForAllLanes('rawg');
         return { results: ['game'], pagination: { page: options.page, perPage: 20, hasMore: true } };
       }
     };
-    const app = createApp({ anilistAdapter: anilist, myanimelistAdapter: { enabled: false }, tmdbAdapter: tmdb, rawgAdapter: rawg });
+    const app = createApp({ anilistAdapter: anilist, myanimelistAdapter: { enabled: false }, tmdbAdapter: tmdb, thegamesdbAdapter: thegamesdb, rawgAdapter: rawg });
 
     const response = await request(app)
       .get('/api/media/search?type=all&q=zelda&includeAdult=false');
 
     assert.equal(response.status, 200);
-    assert.deepEqual(started.sort(), ['anilist', 'rawg', 'tmdb-movie', 'tmdb-tv']);
+    assert.deepEqual(started.sort(), ['anilist', 'thegamesdb', 'tmdb-movie', 'tmdb-tv']);
     assert.deepEqual(response.body.results, ['anime', 'movie', 'tv', 'game']);
     assert.equal(response.body.source, 'combined');
     assert.deepEqual(response.body.pagination.providers, {
       anilist: { page: 1, perPage: 12, hasMore: true },
       tmdb: { page: 1, perPage: 20, hasMore: false },
-      rawg: { page: 1, perPage: 20, hasMore: true }
+      thegamesdb: { page: 1, perPage: 20, hasMore: true }
     });
     assert.equal(response.body.pagination.page, 1);
     assert.equal(response.body.pagination.hasMore, true);
@@ -648,6 +731,10 @@ describe('combined media search HTTP API', () => {
     assert.equal(response.status, 200);
     assert.deepEqual(response.body.results, ['anime', 'movie', 'tv']);
     assert.deepEqual(response.body.providerErrors, [{
+      provider: 'thegamesdb',
+      code: 'PROVIDER_UNAVAILABLE',
+      message: 'TheGamesDB is currently unavailable.'
+    }, {
       provider: 'rawg',
       code: 'PROVIDER_RATE_LIMITED',
       message: 'RAWG rate limit reached.'
@@ -671,7 +758,7 @@ describe('combined media search HTTP API', () => {
     const emptyResponse = await request(emptyAnime).get('/api/media/search?type=all&q=empty');
     assert.equal(emptyResponse.status, 200);
     assert.deepEqual(emptyResponse.body.results, []);
-    assert.deepEqual(emptyResponse.body.providerErrors.map(({ provider }) => provider), ['tmdb', 'rawg']);
+    assert.deepEqual(emptyResponse.body.providerErrors.map(({ provider }) => provider), ['tmdb', 'thegamesdb', 'rawg']);
 
     const allFailed = createApp({
       anilistAdapter: { async searchAnime() { throw new ProviderError(PROVIDER_ERROR_CODES.UNAVAILABLE); } },
@@ -752,6 +839,7 @@ describe('combined media search HTTP API', () => {
           return { results: [`anime-${options.page}`], pagination: { page: options.page, perPage: 12, hasMore: options.page < 2 } };
         }
       },
+      thegamesdbAdapter: { async searchMedia() { return { results: [], pagination: { page: 1, perPage: 20, hasMore: false } }; } },
       tmdbAdapter: { async searchMedia() { return { results: [], pagination: { page: 1, perPage: 20, hasMore: false } }; } },
       rawgAdapter: { async searchMedia() { return { results: [], pagination: { page: 1, perPage: 20, hasMore: false } }; } }
     });
@@ -795,13 +883,21 @@ describe('combined media search HTTP API', () => {
 
     assert.equal(first.status, 200);
     assert.deepEqual(first.body.providerErrors, [{
+      provider: 'thegamesdb',
+      code: 'PROVIDER_UNAVAILABLE',
+      message: 'TheGamesDB is currently unavailable.'
+    }, {
       provider: 'rawg',
       code: 'PROVIDER_UNAVAILABLE',
       message: 'RAWG is currently unavailable.'
     }]);
     assert.equal(retry.status, 200);
     assert.deepEqual(retry.body.results, ['recovered-game']);
-    assert.deepEqual(retry.body.providerErrors, []);
+    assert.deepEqual(retry.body.providerErrors, [{
+      provider: 'thegamesdb',
+      code: 'PROVIDER_UNAVAILABLE',
+      message: 'TheGamesDB is currently unavailable.'
+    }]);
     assert.equal(retry.body.pagination.hasMore, false);
     assert.equal(retry.body.pagination.continuation, null);
     assert.deepEqual(calls, { anilist: 1, tmdb: 2, rawg: 2 });

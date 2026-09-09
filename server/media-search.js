@@ -5,16 +5,16 @@ export const MIN_PROVIDER_QUERY_LENGTH = 3;
 export const MEDIA_SEARCH_TYPES = Object.freeze(['anime', 'movie', 'tv', 'game', 'all']);
 
 const PROVIDER_CODES = new Set(Object.values(PROVIDER_ERROR_CODES));
-const PROVIDER_LABELS = Object.freeze({ anilist: 'AniList', myanimelist: 'MyAnimeList', tmdb: 'TMDB', rawg: 'RAWG' });
-const DEFAULT_PROVIDERS = Object.freeze({ anime: 'anilist', movie: 'tmdb', tv: 'tmdb', game: 'rawg' });
+const PROVIDER_LABELS = Object.freeze({ anilist: 'AniList', myanimelist: 'MyAnimeList', tmdb: 'TMDB', thegamesdb: 'TheGamesDB', rawg: 'RAWG' });
+const DEFAULT_PROVIDERS = Object.freeze({ anime: 'anilist', movie: 'tmdb', tv: 'tmdb', game: 'thegamesdb' });
 const COMBINED_LANE_TYPES = Object.freeze(['anime', 'movie', 'tv', 'game']);
 const COMBINED_LANE_CONFIG = Object.freeze({
   anime: Object.freeze({ provider: 'anilist', perPage: 12 }),
   movie: Object.freeze({ provider: 'tmdb', perPage: 20 }),
   tv: Object.freeze({ provider: 'tmdb', perPage: 20 }),
-  game: Object.freeze({ provider: 'rawg', perPage: 20 })
+  game: Object.freeze({ provider: 'thegamesdb', perPage: 20 })
 });
-const PROVIDER_SOURCES = new Set(['anilist', 'myanimelist', 'tmdb', 'rawg']);
+const PROVIDER_SOURCES = new Set(['anilist', 'myanimelist', 'tmdb', 'thegamesdb', 'rawg']);
 
 export function formatProviderFailure(error, provider) {
   const code = error instanceof ProviderError && PROVIDER_CODES.has(error.code)
@@ -188,7 +188,9 @@ function decodeContinuation(cursor) {
 
   for (const type of COMBINED_LANE_TYPES) {
     const lane = state.lanes[type];
-    const allowedProviders = type === 'anime' ? ['anilist', 'myanimelist'] : [COMBINED_LANE_CONFIG[type].provider];
+    const allowedProviders = type === 'anime'
+      ? ['anilist', 'myanimelist']
+      : type === 'game' ? ['thegamesdb', 'rawg'] : [COMBINED_LANE_CONFIG[type].provider];
     if (!lane || typeof lane !== 'object' || Array.isArray(lane) || !allowedProviders.includes(lane.provider) ||
         !isPositiveInteger(lane.nextPage) || (lane.lastPage !== null && !isPositiveInteger(lane.lastPage)) ||
         !isPositiveInteger(lane.perPage) || typeof lane.hasMore !== 'boolean' ||
@@ -279,8 +281,70 @@ async function searchAnimeLane(validated, laneState, adapters) {
   }
 }
 
+async function searchGameLane(validated, laneState, adapters) {
+  const selectedProvider = validated.retryProvider && laneState.failed
+    ? validated.retryProvider
+    : laneState.provider;
+  if (selectedProvider === 'rawg') {
+    try {
+      const result = await callProvider(
+        adapters.rawg,
+        { ...validated, type: 'game', provider: 'rawg', page: laneState.nextPage, perPage: 20 },
+        'rawg'
+      );
+      return {
+        success: true,
+        response: normalizeSearchResponse(result, 'rawg'),
+        failures: [],
+        attemptedProviders: ['rawg']
+      };
+    } catch (error) {
+      return { success: false, failures: [failureRecord(error, 'rawg')], attemptedProviders: ['rawg'] };
+    }
+  }
+
+  try {
+    const result = await callProvider(
+      adapters.thegamesdb,
+      { ...validated, type: 'game', provider: 'thegamesdb', page: laneState.nextPage, perPage: 20 },
+      'thegamesdb'
+    );
+    return {
+      success: true,
+      response: normalizeSearchResponse(result, 'thegamesdb'),
+      failures: [],
+      attemptedProviders: ['thegamesdb']
+    };
+  } catch (theGamesDBError) {
+    if (!isProviderUnavailable(theGamesDBError) || isDisabled(adapters.rawg)) {
+      return { success: false, failures: [failureRecord(theGamesDBError, 'thegamesdb')], attemptedProviders: ['thegamesdb'] };
+    }
+
+    try {
+      const result = await callProvider(
+        adapters.rawg,
+        { ...validated, type: 'game', provider: 'rawg', page: laneState.nextPage, perPage: 20 },
+        'rawg'
+      );
+      return {
+        success: true,
+        response: normalizeSearchResponse(result, 'rawg'),
+        failures: [failureRecord(theGamesDBError, 'thegamesdb')],
+        attemptedProviders: ['thegamesdb', 'rawg']
+      };
+    } catch (rawgError) {
+      return {
+        success: false,
+        failures: [failureRecord(theGamesDBError, 'thegamesdb'), failureRecord(rawgError, 'rawg')],
+        attemptedProviders: ['thegamesdb', 'rawg']
+      };
+    }
+  }
+}
+
 async function searchCombinedLane(type, validated, laneState, adapters) {
   if (type === 'anime') return searchAnimeLane(validated, laneState, adapters);
+  if (type === 'game') return searchGameLane(validated, laneState, adapters);
 
   const provider = COMBINED_LANE_CONFIG[type].provider;
   try {
@@ -424,8 +488,14 @@ async function searchCombined(validated, adapters) {
  * Coordinate provider-owned typed pages and independent Combined Search lanes.
  * HTTP status and error-envelope concerns stay in the Express route layer.
  */
-export function createMediaSearchService({ anilistAdapter, myanimelistAdapter, tmdbAdapter, rawgAdapter }) {
-  const adapters = { anilist: anilistAdapter, myanimelist: myanimelistAdapter, tmdb: tmdbAdapter, rawg: rawgAdapter };
+export function createMediaSearchService({ anilistAdapter, myanimelistAdapter, tmdbAdapter, thegamesdbAdapter, rawgAdapter }) {
+  const adapters = {
+    anilist: anilistAdapter,
+    myanimelist: myanimelistAdapter,
+    tmdb: tmdbAdapter,
+    thegamesdb: thegamesdbAdapter,
+    rawg: rawgAdapter
+  };
 
   return {
     async search(validated) {
@@ -439,6 +509,28 @@ export function createMediaSearchService({ anilistAdapter, myanimelistAdapter, t
           results: [],
           pagination: { page: validated.page, perPage: validated.perPage, hasMore: false }
         }, validated.provider ?? defaultProvider);
+      }
+
+      if (type === 'game' && !validated.provider) {
+        try {
+          return normalizeSearchResponse(
+            await callProvider(adapters.thegamesdb, validated, 'thegamesdb'),
+            'thegamesdb'
+          );
+        } catch (theGamesDBError) {
+          if (!isProviderUnavailable(theGamesDBError) || isDisabled(adapters.rawg)) {
+            throw Object.assign(theGamesDBError, { provider: 'thegamesdb' });
+          }
+          try {
+            return normalizeSearchResponse(
+              await callProvider(adapters.rawg, { ...validated, provider: 'rawg' }, 'rawg'),
+              'rawg',
+              [providerFailureEntry(theGamesDBError, 'thegamesdb')]
+            );
+          } catch (rawgError) {
+            throw Object.assign(rawgError, { provider: 'rawg' });
+          }
+        }
       }
 
       if (type !== 'anime') {
