@@ -34,7 +34,12 @@ describe('typed media search API', () => {
     expect(isValidMediaSearchPayload({
       results: [], source: 'tmdb', pagination: { page: 1, perPage: 12, hasMore: false }, providerErrors: []
     })).toBe(true);
-    expect(isValidMediaSearchPayload({ results: [], source: 'rawg', pagination: {}, providerErrors: [] })).toBe(false);
+    expect(isValidMediaSearchPayload({
+      results: [],
+      source: 'rawg',
+      pagination: { page: 1, perPage: 12, hasMore: false },
+      providerErrors: []
+    })).toBe(true);
 
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
@@ -42,5 +47,25 @@ describe('typed media search API', () => {
     }));
 
     await expect(searchMedia({ type: 'tv', query: 'broken' })).rejects.toMatchObject({ code: 'INVALID_PAYLOAD' });
+  });
+
+  it('supports game searches and RAWG payloads', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        results: [],
+        source: 'rawg',
+        pagination: { page: 1, perPage: 12, hasMore: false },
+        providerErrors: []
+      })
+    }));
+
+    await expect(searchMedia({ type: 'game', query: 'zelda', provider: 'rawg' })).resolves.toMatchObject({
+      source: 'rawg'
+    });
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/media/search?type=game&q=zelda&page=1&perPage=12&includeAdult=true&provider=rawg',
+      expect.objectContaining({ headers: { Accept: 'application/json' } })
+    );
   });
 });

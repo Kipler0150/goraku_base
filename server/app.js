@@ -47,9 +47,9 @@ function validateMediaSearchQuery(query) {
 
   const validType = hasSingleValue('type') && MEDIA_SEARCH_TYPES.includes(searchQuery.type);
   if (!Object.hasOwn(searchQuery, 'type')) {
-    details.push({ field: 'type', message: 'type is required and must be exactly "anime", "movie", or "tv".' });
+    details.push({ field: 'type', message: 'type is required and must be exactly "anime", "movie", "tv", or "game".' });
   } else if (!validType) {
-    details.push({ field: 'type', message: 'type must be exactly "anime", "movie", or "tv".' });
+    details.push({ field: 'type', message: 'type must be exactly "anime", "movie", "tv", or "game".' });
   }
 
   let trimmedQuery;
@@ -92,7 +92,9 @@ function validateMediaSearchQuery(query) {
 
   let provider;
   if (Object.hasOwn(searchQuery, 'provider')) {
-    const providers = searchQuery.type === 'anime' ? ['anilist', 'myanimelist'] : ['tmdb'];
+    const providers = searchQuery.type === 'anime'
+      ? ['anilist', 'myanimelist']
+      : searchQuery.type === 'game' ? ['rawg'] : ['tmdb'];
     if (!hasSingleValue('provider') || !providers.includes(searchQuery.provider)) {
       details.push({ field: 'provider', message: `provider must be ${providers.join(' or ')}.` });
     } else {
@@ -127,10 +129,11 @@ export function createApp({
   enableTestErrorRoute = false,
   anilistAdapter = createAniListAdapter(),
   myanimelistAdapter = createMyAnimeListAdapter(),
-  tmdbAdapter = createTMDBAdapter()
+  tmdbAdapter = createTMDBAdapter(),
+  rawgAdapter
 } = {}) {
   const app = express();
-  const mediaSearch = createMediaSearchService({ anilistAdapter, myanimelistAdapter, tmdbAdapter });
+  const mediaSearch = createMediaSearchService({ anilistAdapter, myanimelistAdapter, tmdbAdapter, rawgAdapter });
 
   app.disable('x-powered-by');
   app.use(express.json());
@@ -157,7 +160,7 @@ export function createApp({
         combinedFailureResponse(response, error.mediaType ?? validated.type);
         return;
       }
-      const defaultProvider = validated.type === 'anime' ? 'anilist' : 'tmdb';
+      const defaultProvider = validated.type === 'anime' ? 'anilist' : validated.type === 'game' ? 'rawg' : 'tmdb';
       providerFailureResponse(response, error, error?.provider ?? validated.provider ?? defaultProvider);
     }
   });

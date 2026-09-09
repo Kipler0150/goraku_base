@@ -1,15 +1,8 @@
 import { createMedia } from '../../shared/media.js';
+import { ProviderError, PROVIDER_ERROR_CODES } from './errors.js';
 
 export const ANILIST_ENDPOINT = 'https://graphql.anilist.co';
 export const ANILIST_TIMEOUT_MS = 5_000;
-
-export const PROVIDER_ERROR_CODES = Object.freeze({
-  TIMEOUT: 'PROVIDER_TIMEOUT',
-  RATE_LIMITED: 'PROVIDER_RATE_LIMITED',
-  INVALID_RESPONSE: 'PROVIDER_INVALID_RESPONSE',
-  UNAVAILABLE: 'PROVIDER_UNAVAILABLE',
-  ERROR: 'PROVIDER_ERROR'
-});
 
 const PROVIDER_ERROR_MESSAGES = Object.freeze({
   [PROVIDER_ERROR_CODES.TIMEOUT]: 'AniList did not respond within the allowed time.',
@@ -46,20 +39,10 @@ const GRAPHQL_QUERY = `
 /**
  * A safe, stable error raised by a provider adapter.
  */
-export class ProviderError extends Error {
-  /**
-   * @param {keyof typeof PROVIDER_ERROR_CODES|string} code
-   * @param {string|undefined} message
-   */
-  constructor(code, message = undefined) {
-    super(message ?? PROVIDER_ERROR_MESSAGES[code] ?? PROVIDER_ERROR_MESSAGES[PROVIDER_ERROR_CODES.ERROR]);
-    this.name = 'ProviderError';
-    this.code = code;
-  }
-}
+export { ProviderError, PROVIDER_ERROR_CODES };
 
 function invalidResponse() {
-  return new ProviderError(PROVIDER_ERROR_CODES.INVALID_RESPONSE);
+  return new ProviderError(PROVIDER_ERROR_CODES.INVALID_RESPONSE, PROVIDER_ERROR_MESSAGES[PROVIDER_ERROR_CODES.INVALID_RESPONSE]);
 }
 
 function assertObject(value) {
@@ -269,10 +252,10 @@ function normalizePayload(payload) {
 }
 
 function errorForStatus(status) {
-  if (status === 403) return new ProviderError(PROVIDER_ERROR_CODES.UNAVAILABLE);
-  if (status === 429) return new ProviderError(PROVIDER_ERROR_CODES.RATE_LIMITED);
-  if (status === 408 || status === 504) return new ProviderError(PROVIDER_ERROR_CODES.TIMEOUT);
-  return new ProviderError(PROVIDER_ERROR_CODES.ERROR);
+  if (status === 403) return new ProviderError(PROVIDER_ERROR_CODES.UNAVAILABLE, PROVIDER_ERROR_MESSAGES[PROVIDER_ERROR_CODES.UNAVAILABLE]);
+  if (status === 429) return new ProviderError(PROVIDER_ERROR_CODES.RATE_LIMITED, PROVIDER_ERROR_MESSAGES[PROVIDER_ERROR_CODES.RATE_LIMITED]);
+  if (status === 408 || status === 504) return new ProviderError(PROVIDER_ERROR_CODES.TIMEOUT, PROVIDER_ERROR_MESSAGES[PROVIDER_ERROR_CODES.TIMEOUT]);
+  return new ProviderError(PROVIDER_ERROR_CODES.ERROR, PROVIDER_ERROR_MESSAGES[PROVIDER_ERROR_CODES.ERROR]);
 }
 
 /**
@@ -297,7 +280,7 @@ export function createAniListAdapter({
         timeoutHandle = setTimeout(() => {
           timedOut = true;
           controller.abort();
-          reject(new ProviderError(PROVIDER_ERROR_CODES.TIMEOUT));
+          reject(new ProviderError(PROVIDER_ERROR_CODES.TIMEOUT, PROVIDER_ERROR_MESSAGES[PROVIDER_ERROR_CODES.TIMEOUT]));
         }, timeoutMs);
       });
 
@@ -335,9 +318,9 @@ export function createAniListAdapter({
       } catch (error) {
         if (error instanceof ProviderError) throw error;
         if (timedOut || error?.name === 'AbortError') {
-          throw new ProviderError(PROVIDER_ERROR_CODES.TIMEOUT);
+          throw new ProviderError(PROVIDER_ERROR_CODES.TIMEOUT, PROVIDER_ERROR_MESSAGES[PROVIDER_ERROR_CODES.TIMEOUT]);
         }
-        throw new ProviderError(PROVIDER_ERROR_CODES.ERROR);
+        throw new ProviderError(PROVIDER_ERROR_CODES.ERROR, PROVIDER_ERROR_MESSAGES[PROVIDER_ERROR_CODES.ERROR]);
       } finally {
         clearTimeout(timeoutHandle);
       }

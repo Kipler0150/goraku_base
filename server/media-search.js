@@ -1,15 +1,12 @@
-import {
-  ProviderError,
-  PROVIDER_ERROR_CODES
-} from './providers/anilist.js';
+import { ProviderError, PROVIDER_ERROR_CODES } from './providers/errors.js';
 
 export const PROVIDERS_UNAVAILABLE_CODE = 'PROVIDERS_UNAVAILABLE';
 export const MIN_PROVIDER_QUERY_LENGTH = 3;
-export const MEDIA_SEARCH_TYPES = Object.freeze(['anime', 'movie', 'tv']);
+export const MEDIA_SEARCH_TYPES = Object.freeze(['anime', 'movie', 'tv', 'game']);
 
 const PROVIDER_CODES = new Set(Object.values(PROVIDER_ERROR_CODES));
-const PROVIDER_LABELS = Object.freeze({ anilist: 'AniList', myanimelist: 'MyAnimeList', tmdb: 'TMDB' });
-const DEFAULT_PROVIDERS = Object.freeze({ anime: 'anilist', movie: 'tmdb', tv: 'tmdb' });
+const PROVIDER_LABELS = Object.freeze({ anilist: 'AniList', myanimelist: 'MyAnimeList', tmdb: 'TMDB', rawg: 'RAWG' });
+const DEFAULT_PROVIDERS = Object.freeze({ anime: 'anilist', movie: 'tmdb', tv: 'tmdb', game: 'rawg' });
 
 export function formatProviderFailure(error, provider) {
   const code = error instanceof ProviderError && PROVIDER_CODES.has(error.code)
@@ -67,7 +64,7 @@ function normalizeSearchResponse(result, source, providerErrors = []) {
   if (!Number.isInteger(page) || page < 1 || !Number.isInteger(perPage) || perPage < 1 || typeof hasMore !== 'boolean') {
     throw new ProviderError(PROVIDER_ERROR_CODES.INVALID_RESPONSE);
   }
-  if (!['anilist', 'myanimelist', 'tmdb'].includes(source)) {
+  if (!['anilist', 'myanimelist', 'tmdb', 'rawg'].includes(source)) {
     throw new ProviderError(PROVIDER_ERROR_CODES.INVALID_RESPONSE);
   }
   return {
@@ -86,8 +83,8 @@ function combinedFailure(type = 'anime') {
  * Coordinate one provider-owned media page without merging provider results.
  * HTTP status and error-envelope concerns stay in the Express route layer.
  */
-export function createMediaSearchService({ anilistAdapter, myanimelistAdapter, tmdbAdapter }) {
-  const adapters = { anilist: anilistAdapter, myanimelist: myanimelistAdapter, tmdb: tmdbAdapter };
+export function createMediaSearchService({ anilistAdapter, myanimelistAdapter, tmdbAdapter, rawgAdapter }) {
+  const adapters = { anilist: anilistAdapter, myanimelist: myanimelistAdapter, tmdb: tmdbAdapter, rawg: rawgAdapter };
 
   return {
     async search(validated) {

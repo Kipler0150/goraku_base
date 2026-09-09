@@ -2,8 +2,8 @@ import { requestJson } from './request.js';
 
 const SEARCH_PAGE_LIMIT = 100;
 const SEARCH_PER_PAGE_LIMIT = 24;
-const SEARCH_TYPES = new Set(['anime', 'movie', 'tv']);
-const SEARCH_PROVIDERS = new Set(['anilist', 'myanimelist', 'tmdb']);
+const SEARCH_TYPES = new Set(['anime', 'movie', 'tv', 'game']);
+const SEARCH_PROVIDERS = new Set(['anilist', 'myanimelist', 'tmdb', 'rawg']);
 
 export function isValidMediaSearchPayload(payload) {
   return Boolean(
@@ -28,7 +28,7 @@ export async function searchMedia({
   provider,
   signal
 } = {}) {
-  if (!SEARCH_TYPES.has(type)) throw new TypeError('type must be anime, movie, or tv.');
+  if (!SEARCH_TYPES.has(type)) throw new TypeError('type must be anime, movie, tv, or game.');
 
   const searchParams = new URLSearchParams({
     type,

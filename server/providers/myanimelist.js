@@ -1,5 +1,5 @@
 import { createMedia } from '../../shared/media.js';
-import { ProviderError, PROVIDER_ERROR_CODES } from './anilist.js';
+import { ProviderError, PROVIDER_ERROR_CODES } from './errors.js';
 
 export const MYANIMELIST_ENDPOINT = 'https://api.myanimelist.net/v2/anime';
 export const MYANIMELIST_TIMEOUT_MS = 5_000;

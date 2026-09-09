@@ -6,6 +6,10 @@ import {
   ProviderError,
   PROVIDER_ERROR_CODES
 } from '../server/providers/anilist.js';
+import {
+  ProviderError as SharedProviderError,
+  PROVIDER_ERROR_CODES as SHARED_PROVIDER_ERROR_CODES
+} from '../server/providers/errors.js';
 
 function createMockAdapter(result = {
   results: [],
@@ -40,6 +44,11 @@ function createMediaMockAdapter(result = {
 }
 
 describe('anime search HTTP API', () => {
+  it('uses provider errors from the shared provider boundary', () => {
+    assert.equal(ProviderError, SharedProviderError);
+    assert.equal(PROVIDER_ERROR_CODES, SHARED_PROVIDER_ERROR_CODES);
+  });
+
   it('validates the query and does not call AniList for invalid parameters', async () => {
     const mock = createMockAdapter();
     const app = createApp({ anilistAdapter: mock.adapter });
@@ -53,7 +62,7 @@ describe('anime search HTTP API', () => {
         code: 'VALIDATION_ERROR',
         message: 'The request query parameters are invalid.',
         details: [
-          { field: 'type', message: 'type must be exactly "anime", "movie", or "tv".' },
+          { field: 'type', message: 'type must be exactly "anime", "movie", "tv", or "game".' },
           { field: 'q', message: 'q must contain between 1 and 100 characters after trimming.' }
         ]
       }
@@ -392,6 +401,39 @@ describe('anime search HTTP API', () => {
 });
 
 describe('typed media search HTTP API', () => {
+  it('accepts game requests through the RAWG adapter boundary', async () => {
+    const rawg = createMediaMockAdapter();
+    const app = createApp({ rawgAdapter: rawg.adapter });
+
+    const response = await request(app)
+      .get('/api/media/search?type=game&q=zelda&provider=rawg&includeAdult=false');
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.source, 'rawg');
+    assert.deepEqual(rawg.calls, [{
+      query: 'zelda',
+      page: 1,
+      perPage: 12,
+      includeAdult: false
+    }]);
+  });
+
+  it('rejects providers outside the typed game matrix before calling adapters', async () => {
+    const rawg = createMediaMockAdapter();
+    const tmdb = createMediaMockAdapter();
+    const app = createApp({ rawgAdapter: rawg.adapter, tmdbAdapter: tmdb.adapter });
+
+    const response = await request(app)
+      .get('/api/media/search?type=game&q=zelda&provider=tmdb');
+
+    assert.equal(response.status, 400);
+    assert.deepEqual(response.body.error.details, [
+      { field: 'provider', message: 'provider must be rawg.' }
+    ]);
+    assert.equal(rawg.calls.length, 0);
+    assert.equal(tmdb.calls.length, 0);
+  });
+
   it('accepts movie and TV requests through the TMDB adapter boundary', async () => {
     const tmdb = createMediaMockAdapter();
     const app = createApp({
