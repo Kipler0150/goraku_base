@@ -48,6 +48,11 @@ describe('welcome page connectivity feedback', () => {
     fetch
       .mockRejectedValueOnce(new TypeError('network down'))
       .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({ error: { code: 'AUTHENTICATION_REQUIRED', message: 'Authentication is required.', details: [] } })
+      })
+      .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ status: 'ok', service: 'goraku-base-api' })
       });
@@ -60,7 +65,7 @@ describe('welcome page connectivity feedback', () => {
     await user.keyboard('{Enter}');
 
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Backend connected'));
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledTimes(3);
   });
 
   it('shows TMDB credits with the approved logo and required disclaimer', () => {

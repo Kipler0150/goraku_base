@@ -7,6 +7,14 @@ function healthResponse() {
   return { ok: true, json: async () => ({ status: 'ok', service: 'goraku-base-api' }) };
 }
 
+function unauthenticatedResponse() {
+  return {
+    ok: false,
+    status: 401,
+    json: async () => ({ error: { code: 'AUTHENTICATION_REQUIRED', message: 'Authentication is required.', details: [] } })
+  };
+}
+
 function searchResponse(payload) {
   return { ok: true, json: async () => payload };
 }
@@ -68,6 +76,8 @@ describe('Games and Combined Search experience', () => {
     vi.stubGlobal('fetch', vi.fn((url) => (
       url === '/api/health'
         ? Promise.resolve(healthResponse())
+        : url === '/api/auth/me'
+          ? Promise.resolve(unauthenticatedResponse())
         : Promise.resolve(searchResponse(combinedPayload([])))
     )));
   });
@@ -80,6 +90,7 @@ describe('Games and Combined Search experience', () => {
   it('offers Games and All choices and renders explicit game metadata placeholders', async () => {
     fetch.mockImplementation((url) => {
       if (url === '/api/health') return Promise.resolve(healthResponse());
+      if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
       return Promise.resolve(searchResponse({
         results: [gameMedia('1', 'Unknown Game', { platforms: [], developers: [], publishers: [] }, 'thegamesdb')],
         source: 'thegamesdb',
@@ -109,6 +120,7 @@ describe('Games and Combined Search experience', () => {
   it('groups Combined Search results and keeps successful lanes visible after a safe provider failure', async () => {
     fetch.mockImplementation((url) => {
       if (url === '/api/health') return Promise.resolve(healthResponse());
+      if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
       return Promise.resolve(searchResponse(combinedPayload([
         media({ id: 'a1', title: 'Anime result', type: 'ANIME', provider: 'anilist' }),
         media({ id: 'm1', title: 'Movie result', type: 'MOVIE', provider: 'tmdb' }),
@@ -149,6 +161,7 @@ describe('Games and Combined Search experience', () => {
   it('attributes Combined Search results sourced from TheGamesDB', async () => {
     fetch.mockImplementation((url) => {
       if (url === '/api/health') return Promise.resolve(healthResponse());
+      if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
       return Promise.resolve(searchResponse(combinedPayload([
         gameMedia('tgdb-1', 'TheGamesDB game', { platforms: ['PC'], developers: [], publishers: [] }, 'thegamesdb')
       ], {
@@ -172,6 +185,7 @@ describe('Games and Combined Search experience', () => {
     let combinedRequestCount = 0;
     fetch.mockImplementation((url) => {
       if (url === '/api/health') return Promise.resolve(healthResponse());
+      if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
       combinedRequestCount += 1;
       const params = new URL(url, 'http://localhost').searchParams;
       if (combinedRequestCount === 1) {
@@ -230,6 +244,7 @@ describe('Games and Combined Search experience', () => {
     let combinedRequestCount = 0;
     fetch.mockImplementation((url) => {
       if (url === '/api/health') return Promise.resolve(healthResponse());
+      if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
       combinedRequestCount += 1;
       const params = new URL(url, 'http://localhost').searchParams;
       if (combinedRequestCount === 1) {

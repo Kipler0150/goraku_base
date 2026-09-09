@@ -116,6 +116,48 @@ h1 span { color: var(--cyan); }
 .tmdb-credits__logo { display: block; width: 6.5rem; height: auto; }
 .tmdb-credits__notice p { max-width: 36ch; margin: 0; color: var(--muted); font-size: .68rem; line-height: 1.5; letter-spacing: normal; text-transform: none; }
 
+.account-section, .library-section { padding: 5.5rem 0 6rem; border-bottom: 1px solid var(--line); }
+.account-heading { display: flex; align-items: end; justify-content: space-between; gap: 2rem; margin-bottom: 2rem; }
+.account-heading h2, .library-section .section-heading h2 { margin: 0; color: var(--ink); font-size: clamp(1.6rem, 4vw, 2.8rem); font-weight: 400; letter-spacing: -.06em; }
+.account-note { max-width: 34ch; margin: 0; color: var(--muted); font-size: .8rem; line-height: 1.6; }
+.account-loading { min-height: 7rem; padding: 1.5rem; border: 1px solid var(--line); color: var(--muted); background: var(--panel); }
+.account-bar { display: flex; align-items: end; justify-content: space-between; gap: 2rem; }
+.account-email { margin: .9rem 0 0; color: var(--muted); line-height: 1.5; }
+.account-email strong { color: var(--cyan); overflow-wrap: anywhere; }
+.auth-prompt { margin: 0 0 1.2rem; padding: .9rem 1rem; border: 1px solid var(--cyan); color: var(--cyan); background: rgba(92, 225, 230, .06); font-size: .8rem; line-height: 1.5; }
+.auth-switcher { display: flex; gap: .5rem; margin-bottom: 1.2rem; }
+.auth-switcher button { min-height: 2.5rem; padding: .6rem .9rem; border: 1px solid var(--line); color: var(--muted); background: transparent; cursor: pointer; font-size: .72rem; letter-spacing: .06em; text-transform: uppercase; }
+.auth-switcher button:hover, .auth-switcher button:focus-visible, .auth-switcher .auth-switcher__active { border-color: var(--cyan); color: var(--cyan); }
+.auth-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: end; gap: .75rem 1rem; padding: 1.5rem; border: 1px solid var(--line); background: var(--panel); }
+.auth-form .search-form__label { margin: 0; }
+.auth-form input { width: 100%; min-height: 3.25rem; padding: .8rem 1rem; border: 1px solid var(--line); border-radius: 0; color: var(--ink); background: var(--ground); font: inherit; font-size: 1rem; }
+.auth-form input:focus-visible { border-color: var(--cyan); outline-color: var(--yellow); }
+.auth-form__help { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: .72rem; line-height: 1.5; }
+.auth-form .form-error { grid-column: 1 / -1; }
+.form-error { margin: 0; padding: .85rem 1rem; border: 1px solid var(--red); color: var(--red); background: rgba(255, 113, 101, .06); font-size: .78rem; line-height: 1.5; }
+.library-section { border-bottom: 0; }
+.library-state { display: grid; min-height: 220px; place-content: center; justify-items: start; padding: 2rem; border: 1px solid var(--line); background: var(--panel); }
+.library-state h3 { margin: .75rem 0 .6rem; color: var(--ink); font-size: 1.6rem; font-weight: 400; letter-spacing: -.03em; }
+.library-state p { max-width: 46ch; margin: 0; color: var(--muted); line-height: 1.6; }
+.library-state .search-action { margin-top: 1.5rem; }
+.library-state--error { border-color: var(--red); }
+.library-state--error h3 { color: var(--red); }
+.library-list { display: grid; gap: 1rem; margin: 0; padding: 0; list-style: none; }
+.library-item { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 360px); gap: 2rem; padding: 1.4rem; border: 1px solid var(--line); background: var(--panel); }
+.library-item__identity .section-index { margin-bottom: .7rem; }
+.library-item__identity h3 { margin: 0; color: var(--ink); font-size: 1.25rem; font-weight: 400; overflow-wrap: anywhere; }
+.library-item__identity p:last-child { max-width: 48ch; margin: .8rem 0 0; color: var(--muted); font-size: .76rem; line-height: 1.55; }
+.library-item__controls { display: grid; align-content: start; gap: .7rem; }
+.library-item__controls > label:first-child { color: var(--muted); font-size: .68rem; letter-spacing: .08em; text-transform: uppercase; }
+.library-item__controls select { min-height: 2.7rem; padding: .55rem .75rem; border: 1px solid var(--line); border-radius: 0; color: var(--ink); background: var(--ground); font: inherit; font-size: .8rem; }
+.library-item__controls select:focus-visible { border-color: var(--cyan); outline-color: var(--yellow); }
+.favorite-toggle { display: inline-flex; align-items: center; gap: .65rem; color: var(--ink); font-size: .78rem; cursor: pointer; }
+.favorite-toggle input { width: 1.1rem; height: 1.1rem; margin: 0; accent-color: var(--cyan); }
+.library-item__controls .search-action { min-height: 2.7rem; justify-self: start; }
+.library-action { width: 100%; min-height: 2.7rem; padding: .65rem .8rem; border: 1px solid var(--cyan); color: var(--cyan); background: transparent; cursor: pointer; font: inherit; font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.library-action:hover:not(:disabled) { color: var(--ground); background: var(--cyan); }
+.library-action:disabled { cursor: wait; opacity: .6; }
+
 .search-section { padding: 5.5rem 0 6rem; border-bottom: 1px solid var(--line); }
 .search-attribution { margin: 0; color: var(--muted); font-size: .68rem; letter-spacing: .08em; text-align: right; }
 .search-attribution a { color: var(--cyan); text-decoration: none; }
@@ -202,6 +244,13 @@ h1 span { color: var(--cyan); }
   .intro { display: block; padding: 4.5rem 0 4rem; }
   h1 { max-width: 8ch; font-size: clamp(3.25rem, 17vw, 5.8rem); }
   .intro-copy { margin-top: 2rem; }
+  .account-section, .library-section { padding: 4rem 0; }
+  .account-heading, .account-bar { display: block; }
+  .account-note { margin-top: 1.2rem; }
+  .account-bar .search-action { margin-top: 1.5rem; }
+  .auth-form { grid-template-columns: 1fr; padding: 1rem; }
+  .auth-form .form-error { grid-column: auto; }
+  .auth-form__help { grid-column: auto; }
   .health-section { padding: 4rem 0; }
   .section-heading { display: block; }
   .section-heading code { display: block; margin-top: 1rem; }
@@ -242,6 +291,7 @@ h1 span { color: var(--cyan); }
   .provider-errors__detail { text-align: left; }
   .combined-group__heading { display: block; }
   .combined-group__heading h3 { margin-top: .6rem; }
+  .library-item { grid-template-columns: 1fr; gap: 1.5rem; }
 }
 
 @media (max-width: 500px) {

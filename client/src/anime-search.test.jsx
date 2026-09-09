@@ -61,13 +61,25 @@ function healthResponse() {
   return { ok: true, json: async () => ({ status: 'ok', service: 'goraku-base-api' }) };
 }
 
+function unauthenticatedResponse() {
+  return {
+    ok: false,
+    status: 401,
+    json: async () => ({ error: { code: 'AUTHENTICATION_REQUIRED', message: 'Authentication is required.', details: [] } })
+  };
+}
+
 function searchResponse(payload) {
   return { ok: true, json: async () => payload };
 }
 
 describe('anime search experience', () => {
   beforeEach(() => {
-    vi.stubGlobal('fetch', vi.fn((url) => url === '/api/health' ? Promise.resolve(healthResponse()) : Promise.resolve(searchResponse(searchPayload([])))));
+    vi.stubGlobal('fetch', vi.fn((url) => {
+      if (url === '/api/health') return Promise.resolve(healthResponse());
+      if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
+      return Promise.resolve(searchResponse(searchPayload([])));
+    }));
   });
 
   afterEach(() => {
@@ -80,20 +92,22 @@ describe('anime search experience', () => {
     vi.useFakeTimers();
     fetch.mockImplementation((url) => {
       if (url === '/api/health') return Promise.resolve(healthResponse());
+      if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
       return Promise.resolve(searchResponse(searchPayload([media('1', 'Naruto')])))
     });
     render(<App />);
     const input = screen.getByRole('searchbox', { name: 'Search anime by title' });
+    const searchCalls = () => fetch.mock.calls.filter(([url]) => url.startsWith('/api/media/search'));
 
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(searchCalls()).toHaveLength(0);
     fireEvent.change(input, { target: { value: 'naruto' } });
     expect(screen.getByText('Searching. Results will appear below.')).toBeInTheDocument();
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(searchCalls()).toHaveLength(0);
 
     await act(async () => {
       vi.advanceTimersByTime(299);
     });
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(searchCalls()).toHaveLength(0);
 
     await act(async () => {
       vi.advanceTimersByTime(1);
@@ -113,6 +127,7 @@ describe('anime search experience', () => {
   it('submits immediately from Enter and reruns page one when adult visibility changes', async () => {
     fetch.mockImplementation((url) => {
       if (url === '/api/health') return Promise.resolve(healthResponse());
+      if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
       return Promise.resolve(searchResponse(searchPayload([media('1', 'Naruto')])));
     });
     render(<App />);
@@ -160,6 +175,7 @@ describe('anime search experience', () => {
     let searchCount = 0;
     fetch.mockImplementation((url) => {
       if (url === '/api/health') return Promise.resolve(healthResponse());
+      if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
       searchCount += 1;
       return new Promise((resolve) => {
         if (searchCount === 1) resolveFirst = resolve;
@@ -199,6 +215,7 @@ describe('anime search experience', () => {
     let searchCount = 0;
     fetch.mockImplementation((url) => {
       if (url === '/api/health') return Promise.resolve(healthResponse());
+      if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
       searchCount += 1;
       if (searchCount === 1) return Promise.resolve(searchResponse(searchPayload([media('1', 'First result')], 1, true)));
       if (searchCount === 2) return Promise.reject(new TypeError('network down'));
@@ -224,6 +241,7 @@ describe('anime search experience', () => {
     let searchCount = 0;
     fetch.mockImplementation((url) => {
       if (url === '/api/health') return Promise.resolve(healthResponse());
+      if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
       searchCount += 1;
       if (searchCount === 1) return Promise.reject(new TypeError('network down'));
       return Promise.resolve(searchResponse(searchPayload([])));
@@ -241,6 +259,7 @@ describe('anime search experience', () => {
   it('shows the normal no-results state for a short query', async () => {
     fetch.mockImplementation((url) => {
       if (url === '/api/health') return Promise.resolve(healthResponse());
+      if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
       return Promise.resolve(searchResponse(searchPayload([])));
     });
     render(<App />);
@@ -254,6 +273,7 @@ describe('anime search experience', () => {
   it('provides an accessible type selector and reruns a non-empty query for the selected type', async () => {
     fetch.mockImplementation((url) => {
       if (url === '/api/health') return Promise.resolve(healthResponse());
+      if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
       const params = new URL(url, 'http://localhost').searchParams;
       const type = params.get('type');
       return Promise.resolve(searchResponse(searchPayload([
@@ -284,6 +304,7 @@ describe('anime search experience', () => {
   it('renders movie runtime and TV season and episode placeholders from the shared card', async () => {
     fetch.mockImplementation((url) => {
       if (url === '/api/health') return Promise.resolve(healthResponse());
+      if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
       const params = new URL(url, 'http://localhost').searchParams;
       const type = params.get('type');
       return Promise.resolve(searchResponse(searchPayload([
@@ -315,6 +336,7 @@ describe('anime search experience', () => {
     let searchCount = 0;
     fetch.mockImplementation((url) => {
       if (url === '/api/health') return Promise.resolve(healthResponse());
+      if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
       searchCount += 1;
       return new Promise((resolve) => {
         if (searchCount === 1) resolveAnime = resolve;
@@ -350,6 +372,7 @@ describe('anime search experience', () => {
     let searchCount = 0;
     fetch.mockImplementation((url) => {
       if (url === '/api/health') return Promise.resolve(healthResponse());
+      if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
       searchCount += 1;
       const params = new URL(url, 'http://localhost').searchParams;
       if (searchCount === 1) {

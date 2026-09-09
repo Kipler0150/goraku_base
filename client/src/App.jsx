@@ -1,5 +1,7 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useHealthCheck } from './hooks/useHealthCheck.js';
+import { useAuth } from './hooks/useAuth.js';
+import { useLibrary } from './hooks/useLibrary.js';
 import { useMediaSearch } from './hooks/useMediaSearch.js';
 import { mediaIdentity } from './mediaIdentity.js';
 import './styles.css';
@@ -97,6 +99,16 @@ function formatMetadataList(value, label) {
   return Array.isArray(value) && value.length > 0 ? value.join(', ') : `${label} unavailable`;
 }
 
+function formatApiError(error, fallback) {
+  if (error?.code === 'VALIDATION_ERROR' && Array.isArray(error.details) && error.details.length > 0) {
+    return error.details.map((detail) => detail.message).filter(Boolean).join(' ');
+  }
+  if (typeof error?.message === 'string' && error.code !== 'INVALID_PAYLOAD' && error.name !== 'TypeError') {
+    return error.message;
+  }
+  return fallback;
+}
+
 const MEDIA_TYPE_LABELS = Object.freeze({
   anime: 'Anime',
   movie: 'Movies',
@@ -140,10 +152,13 @@ function getCardFacts(media) {
   ];
 }
 
-function MediaCard({ media }) {
+function MediaCard({ media, user, libraryItem, libraryAction, onSave, onRequestSignIn }) {
   const [imageFailed, setImageFailed] = useState(false);
   const title = media.title || 'Title unavailable';
   const hasImage = Boolean(media.image) && !imageFailed;
+  const identity = mediaIdentity(media);
+  const isSaving = libraryAction?.type === 'save' && libraryAction.key === identity;
+  const isSaved = Boolean(libraryItem);
 
   return (
     <article className="media-card">
@@ -179,6 +194,14 @@ function MediaCard({ media }) {
             </div>
           ))}
         </dl>
+        <button
+          type="button"
+          className="library-action"
+          onClick={() => user ? onSave(media) : onRequestSignIn(media)}
+          disabled={isSaved || isSaving}
+        >
+          {isSaving ? 'Saving…' : isSaved ? 'Saved to library' : 'Save to library'}
+        </button>
       </div>
     </article>
   );
@@ -311,19 +334,26 @@ function ProviderFailureNotices({ search, isBusy }) {
   );
 }
 
-function MediaGrid({ results, label }) {
+function MediaGrid({ results, label, user, library, onSave, onRequestSignIn }) {
   return (
     <ul className="media-grid" aria-label={`${label} search results`}>
       {results.map((media) => (
         <li key={mediaIdentity(media)}>
-          <MediaCard media={media} />
+          <MediaCard
+            media={media}
+            user={user}
+            libraryItem={library.results.find((item) => mediaIdentity(item) === mediaIdentity(media))}
+            libraryAction={library.action}
+            onSave={onSave}
+            onRequestSignIn={onRequestSignIn}
+          />
         </li>
       ))}
     </ul>
   );
 }
 
-function CombinedResults({ results }) {
+function CombinedResults({ results, user, library, onSave, onRequestSignIn }) {
   return (
     <div className="combined-results">
       {getCombinedGroups(results).map((group) => {
@@ -334,7 +364,14 @@ function CombinedResults({ results }) {
               <p className="section-index">COMBINED / {group.label.toUpperCase()}</p>
               <h3 id={headingId}>{group.label}</h3>
             </div>
-            <MediaGrid results={group.results} label={group.label} />
+            <MediaGrid
+              results={group.results}
+              label={group.label}
+              user={user}
+              library={library}
+              onSave={onSave}
+              onRequestSignIn={onRequestSignIn}
+            />
           </section>
         );
       })}
@@ -342,7 +379,7 @@ function CombinedResults({ results }) {
   );
 }
 
-function SearchResults({ search }) {
+function SearchResults({ search, user, library, onSave, onRequestSignIn }) {
   const { state, isBusy, retrySearch, loadMore, retryPage } = search;
   const typeLabel = getMediaTypeLabel(search.type);
   const typeNoun = getMediaTypeNoun(search.type);
@@ -399,9 +436,22 @@ function SearchResults({ search }) {
       {state.status === 'success' && state.results.length > 0 && (
         <>
           {search.type === 'all' ? (
-            <CombinedResults results={state.results} />
+            <CombinedResults
+              results={state.results}
+              user={user}
+              library={library}
+              onSave={onSave}
+              onRequestSignIn={onRequestSignIn}
+            />
           ) : (
-            <MediaGrid results={state.results} label={typeLabel} />
+            <MediaGrid
+              results={state.results}
+              label={typeLabel}
+              user={user}
+              library={library}
+              onSave={onSave}
+              onRequestSignIn={onRequestSignIn}
+            />
           )}
 
           {state.pageError && (
@@ -432,7 +482,7 @@ function SearchResults({ search }) {
   );
 }
 
-function MediaSearch() {
+function MediaSearch({ user, library, onSave, onRequestSignIn }) {
   const search = useMediaSearch({ type: 'anime' });
   const typeLabel = getMediaTypeLabel(search.type);
 
@@ -496,13 +546,232 @@ function MediaSearch() {
         </label>
       </form>
 
-      <SearchResults search={search} />
+      <SearchResults
+        search={search}
+        user={user}
+        library={library}
+        onSave={onSave}
+        onRequestSignIn={onRequestSignIn}
+      />
+    </section>
+  );
+}
+
+function AuthPanel({ auth, mode, onModeChange, signInPrompt }) {
+  if (auth.status === 'loading') {
+    return (
+      <section className="account-section" id="account" aria-labelledby="account-title" aria-busy="true">
+        <h2 id="account-title" className="visually-hidden">Account</h2>
+        <div className="account-loading" aria-live="polite">Checking local session…</div>
+      </section>
+    );
+  }
+
+  if (auth.user) {
+    return (
+      <section className="account-section" id="account" aria-labelledby="account-title">
+        <div className="account-bar">
+          <div>
+            <p className="section-index">ACCOUNT / ACTIVE SESSION</p>
+            <h2 id="account-title">Your signal is saved.</h2>
+            <p className="account-email">Signed in as <strong>{auth.user.email}</strong></p>
+          </div>
+          <button type="button" className="search-action search-action--secondary" onClick={auth.logout} disabled={auth.isBusy}>
+            {auth.status === 'logging-out' ? 'Signing out…' : 'Log out'}
+          </button>
+        </div>
+        {auth.error && <p className="form-error" role="alert">{formatApiError(auth.error, 'We could not complete that account action.')}</p>}
+      </section>
+    );
+  }
+
+  const isLogin = mode === 'login';
+  const title = isLogin ? 'Sign in to your signal.' : 'Create your local signal.';
+
+  return (
+    <section className="account-section" id="account" aria-labelledby="account-title">
+      <div className="account-heading">
+        <div>
+          <p className="section-index">ACCOUNT / LOCAL SESSION</p>
+          <h2 id="account-title">{title}</h2>
+        </div>
+        <p className="account-note">Search remains public. A local session unlocks personal library actions.</p>
+      </div>
+      {signInPrompt && <p className="auth-prompt" aria-live="polite">{signInPrompt}</p>}
+      {auth.status === 'error' && auth.error && (
+        <p className="form-error" role="alert">{formatApiError(auth.error, 'Authentication is currently unavailable.')}</p>
+      )}
+      <div className="auth-switcher" aria-label="Authentication options">
+        <button type="button" className={isLogin ? 'auth-switcher__active' : ''} onClick={() => onModeChange('login')}>Sign in</button>
+        <button type="button" className={!isLogin ? 'auth-switcher__active' : ''} onClick={() => onModeChange('register')}>Register</button>
+      </div>
+      <form
+        className="auth-form"
+        onSubmit={async (event) => {
+          event.preventDefault();
+          const formElement = event.currentTarget;
+          const form = new FormData(formElement);
+          const authenticated = isLogin
+            ? await auth.login({ email: form.get('email'), password: form.get('password') })
+            : await auth.register({ email: form.get('email'), password: form.get('password') });
+          if (authenticated) formElement.reset();
+        }}
+      >
+        <label className="search-form__label" htmlFor="auth-email">Email</label>
+        <input id="auth-email" name="email" type="email" required autoComplete="email" />
+        <label className="search-form__label" htmlFor="auth-password">Password</label>
+        <input id="auth-password" name="password" type="password" required autoComplete={isLogin ? 'current-password' : 'new-password'} />
+        {!isLogin && <p className="auth-form__help">Use 12–128 characters and at least one ASCII special character.</p>}
+        {auth.error && auth.status !== 'error' && (
+          <p className="form-error" role="alert">{formatApiError(auth.error, isLogin ? 'Sign in could not be completed.' : 'Registration could not be completed.')}</p>
+        )}
+        <button type="submit" className="search-action search-action--primary" disabled={auth.isBusy}>
+          {auth.isBusy ? (isLogin ? 'Signing in…' : 'Registering…') : isLogin ? 'Sign in' : 'Register'}
+        </button>
+      </form>
+    </section>
+  );
+}
+
+function libraryItemLabel(item) {
+  return `${getProviderLabel(item.provider)} ${item.type.toLowerCase()} ${item.providerId}`;
+}
+
+function formatLibraryStatus(status) {
+  return status.replaceAll('_', ' ');
+}
+
+function LibraryItem({ item, library }) {
+  const label = libraryItemLabel(item);
+  const isUpdating = library.action?.id === item.id;
+
+  return (
+    <li className="library-item">
+      <div className="library-item__identity">
+        <p className="section-index">{getProviderLabel(item.provider).toUpperCase()} / {item.type}</p>
+        <h3>{item.providerId}</h3>
+        <p>Stored reference: {label}. Provider metadata is not loaded in this view.</p>
+      </div>
+      <div className="library-item__controls">
+        <label htmlFor={`library-status-${item.id}`}>Library status for {label}</label>
+        <select
+          id={`library-status-${item.id}`}
+          value={item.libraryStatus}
+          onChange={(event) => library.update(item.id, { libraryStatus: event.target.value })}
+          disabled={isUpdating}
+        >
+          <option value="PLANNING">{formatLibraryStatus('PLANNING')}</option>
+          <option value="IN_PROGRESS">{formatLibraryStatus('IN_PROGRESS')}</option>
+          <option value="COMPLETED">{formatLibraryStatus('COMPLETED')}</option>
+          <option value="ON_HOLD">{formatLibraryStatus('ON_HOLD')}</option>
+          <option value="DROPPED">{formatLibraryStatus('DROPPED')}</option>
+        </select>
+        <label className="favorite-toggle">
+          <input
+            type="checkbox"
+            aria-label={`Favorite ${label}`}
+            checked={item.favorite}
+            onChange={(event) => library.update(item.id, { favorite: event.target.checked })}
+            disabled={isUpdating}
+          />
+          <span>Favorite</span>
+        </label>
+        <button
+          type="button"
+          className="search-action search-action--secondary"
+          onClick={() => library.remove(item.id)}
+          disabled={isUpdating}
+        >
+          {library.action?.type === 'remove' && isUpdating ? 'Removing…' : `Remove ${label}`}
+        </button>
+      </div>
+    </li>
+  );
+}
+
+function LibraryView({ auth, library, onRequestSignIn }) {
+  const loading = Boolean(auth.user && (library.status === 'idle' || library.status === 'loading'));
+
+  return (
+    <section className="library-section" id="library" aria-labelledby="library-title" aria-busy={loading}>
+      <div className="section-heading">
+        <div>
+          <h2 id="library-title">Your library.</h2>
+          <p className="section-index">PERSONAL SIGNAL / REFERENCES</p>
+        </div>
+        <code>GET /api/library</code>
+      </div>
+
+      {!auth.user && (
+        <div className="library-state">
+          <span className="state-mark" aria-hidden="true">LOCK</span>
+          <h3>Sign in to see your library.</h3>
+          <p>Search is public, but saved references belong to your local session.</p>
+          <button type="button" className="search-action search-action--primary" onClick={onRequestSignIn}>
+            Sign in to manage your library
+          </button>
+        </div>
+      )}
+
+      {auth.user && loading && (
+        <div className="library-state" aria-live="polite">
+          <span className="state-mark" aria-hidden="true">/ / /</span>
+          <h3>Loading your library.</h3>
+          <p>Reading your stored references from the local API.</p>
+        </div>
+      )}
+
+      {auth.user && library.status === 'error' && (
+        <div className="library-state library-state--error" role="alert">
+          <span className="state-mark" aria-hidden="true">!</span>
+          <h3>The library signal did not come through.</h3>
+          <p>{formatApiError(library.error, 'Library storage is currently unavailable.')}</p>
+          <button type="button" className="search-action search-action--secondary" onClick={library.retry}>Retry library</button>
+        </div>
+      )}
+
+      {auth.user && library.status === 'success' && library.results.length === 0 && (
+        <div className="library-state">
+          <span className="state-mark" aria-hidden="true">0</span>
+          <h3>Your library is clear.</h3>
+          <p>Save a result from Search the signal to create your first stored reference.</p>
+        </div>
+      )}
+
+      {auth.user && library.status === 'success' && library.results.length > 0 && (
+        <ul className="library-list" aria-label="Saved library items">
+          {library.results.map((item) => <LibraryItem item={item} library={library} key={item.id} />)}
+        </ul>
+      )}
+
+      {auth.user && library.error && library.status !== 'error' && (
+        <p className="form-error" role="alert">{formatApiError(library.error, 'The library action could not be completed.')}</p>
+      )}
     </section>
   );
 }
 
 export default function App() {
   const { status, error, retry } = useHealthCheck();
+  const [authMode, setAuthMode] = useState('login');
+  const [signInPrompt, setSignInPrompt] = useState('');
+  const auth = useAuth({ checkOnMount: true });
+
+  const handleAuthenticationRequired = useCallback(() => {
+    auth.clearSession();
+    setAuthMode('login');
+    setSignInPrompt('Your session has expired. Sign in again to manage your library.');
+  }, [auth.clearSession]);
+
+  const library = useLibrary({
+    enabled: auth.status === 'authenticated',
+    onAuthenticationRequired: handleAuthenticationRequired
+  });
+
+  const requestSignIn = () => {
+    setAuthMode('login');
+    setSignInPrompt('Sign in to save this reference to your library.');
+  };
 
   return (
     <div className="app-shell">
@@ -514,6 +783,8 @@ export default function App() {
         </a>
         <nav aria-label="Project navigation">
           <a href="#media-search">Media search</a>
+          <a href="#library">Library</a>
+          <a href="#account">Account</a>
           <a href="#health-check">Health check</a>
           <a href="#next-signal">Next signal</a>
           <a href="#credits">Credits</a>
@@ -531,7 +802,16 @@ export default function App() {
           </div>
         </section>
 
-        <MediaSearch />
+        <AuthPanel auth={auth} mode={authMode} onModeChange={(nextMode) => { setAuthMode(nextMode); setSignInPrompt(''); }} signInPrompt={signInPrompt} />
+
+        <MediaSearch
+          user={auth.user}
+          library={library}
+          onSave={library.save}
+          onRequestSignIn={requestSignIn}
+        />
+
+        <LibraryView auth={auth} library={library} onRequestSignIn={requestSignIn} />
 
         <section className="health-section" id="health-check" aria-labelledby="health-title">
           <div className="section-heading">
@@ -567,13 +847,13 @@ export default function App() {
               <p className="section-index">ROADMAP / QUEUED</p>
             </div>
           </div>
-          <p>Anime, movie, TV, game, and Combined Search discovery are live through Express. Accounts, personal tracking, and additional providers remain queued for later phases.</p>
+          <p>Discovery, local authentication, and reference libraries are live for local and staging use. Google authentication, account recovery, and richer tracking remain future signals.</p>
         </section>
       </main>
 
       <footer className="site-footer" id="credits" aria-labelledby="credits-title">
         <div className="site-footer__identity">
-          <span>GORAKU BASE / PHASE 4</span>
+          <span>GORAKU BASE / PHASE 5</span>
           <span>ANILIST + MYANIMELIST + TMDB + THEGAMESDB + RAWG / UNOFFICIAL</span>
         </div>
         <div className="tmdb-credits">
