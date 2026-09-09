@@ -62,7 +62,7 @@ describe('anime search HTTP API', () => {
         code: 'VALIDATION_ERROR',
         message: 'The request query parameters are invalid.',
         details: [
-          { field: 'type', message: 'type must be exactly "anime", "movie", "tv", or "game".' },
+          { field: 'type', message: 'type must be exactly "anime", "movie", "tv", "game", or "all".' },
           { field: 'q', message: 'q must contain between 1 and 100 characters after trimming.' }
         ]
       }
@@ -574,5 +574,255 @@ describe('typed media search HTTP API', () => {
     }
 
     assert.equal(tmdb.calls.length, 0);
+  });
+});
+
+describe('combined media search HTTP API', () => {
+  it('runs the four lanes concurrently and returns deterministic media-type ordering', async () => {
+    const started = [];
+    let allStarted;
+    const allStartedPromise = new Promise((resolve) => { allStarted = resolve; });
+    const waitForAllLanes = async (provider) => {
+      started.push(provider);
+      if (started.length === 4) allStarted();
+      await allStartedPromise;
+    };
+    const anilist = {
+      async searchAnime(options) {
+        await waitForAllLanes('anilist');
+        return { results: ['anime'], pagination: { page: options.page, perPage: 12, hasMore: true } };
+      }
+    };
+    const tmdb = {
+      async searchMedia(options) {
+        await waitForAllLanes(`tmdb-${options.type}`);
+        return { results: [options.type], pagination: { page: options.page, perPage: 20, hasMore: false } };
+      }
+    };
+    const rawg = {
+      async searchMedia(options) {
+        await waitForAllLanes('rawg');
+        return { results: ['game'], pagination: { page: options.page, perPage: 20, hasMore: true } };
+      }
+    };
+    const app = createApp({ anilistAdapter: anilist, myanimelistAdapter: { enabled: false }, tmdbAdapter: tmdb, rawgAdapter: rawg });
+
+    const response = await request(app)
+      .get('/api/media/search?type=all&q=zelda&includeAdult=false');
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(started.sort(), ['anilist', 'rawg', 'tmdb-movie', 'tmdb-tv']);
+    assert.deepEqual(response.body.results, ['anime', 'movie', 'tv', 'game']);
+    assert.equal(response.body.source, 'combined');
+    assert.deepEqual(response.body.pagination.providers, {
+      anilist: { page: 1, perPage: 12, hasMore: true },
+      tmdb: { page: 1, perPage: 20, hasMore: false },
+      rawg: { page: 1, perPage: 20, hasMore: true }
+    });
+    assert.equal(response.body.pagination.page, 1);
+    assert.equal(response.body.pagination.hasMore, true);
+    assert.equal(typeof response.body.pagination.continuation, 'string');
+    assert.deepEqual(response.body.providerErrors, []);
+  });
+
+  it('returns 200 with safe provider errors when one independent lane fails', async () => {
+    const anilist = {
+      async searchAnime() {
+        return { results: ['anime'], pagination: { page: 1, perPage: 12, hasMore: false } };
+      }
+    };
+    const tmdb = {
+      async searchMedia(options) {
+        return { results: [options.type], pagination: { page: 1, perPage: 20, hasMore: false } };
+      }
+    };
+    const rawg = {
+      async searchMedia() {
+        throw new ProviderError(PROVIDER_ERROR_CODES.RATE_LIMITED, 'private RAWG diagnostic');
+      }
+    };
+    const app = createApp({ anilistAdapter: anilist, myanimelistAdapter: { enabled: false }, tmdbAdapter: tmdb, rawgAdapter: rawg });
+
+    const response = await request(app).get('/api/media/search?type=all&q=zelda');
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body.results, ['anime', 'movie', 'tv']);
+    assert.deepEqual(response.body.providerErrors, [{
+      provider: 'rawg',
+      code: 'PROVIDER_RATE_LIMITED',
+      message: 'RAWG rate limit reached.'
+    }]);
+    assert.equal(JSON.stringify(response.body).includes('private RAWG diagnostic'), false);
+    assert.equal(response.body.pagination.hasMore, true);
+    assert.equal(typeof response.body.pagination.continuation, 'string');
+  });
+
+  it('treats a valid empty lane as success and returns 503 only when every lane fails', async () => {
+    const emptyAnime = createApp({
+      anilistAdapter: {
+        async searchAnime() {
+          return { results: [], pagination: { page: 1, perPage: 12, hasMore: false } };
+        }
+      },
+      myanimelistAdapter: { enabled: false },
+      tmdbAdapter: { async searchMedia() { throw new ProviderError(PROVIDER_ERROR_CODES.UNAVAILABLE); } },
+      rawgAdapter: { async searchMedia() { throw new ProviderError(PROVIDER_ERROR_CODES.ERROR); } }
+    });
+    const emptyResponse = await request(emptyAnime).get('/api/media/search?type=all&q=empty');
+    assert.equal(emptyResponse.status, 200);
+    assert.deepEqual(emptyResponse.body.results, []);
+    assert.deepEqual(emptyResponse.body.providerErrors.map(({ provider }) => provider), ['tmdb', 'rawg']);
+
+    const allFailed = createApp({
+      anilistAdapter: { async searchAnime() { throw new ProviderError(PROVIDER_ERROR_CODES.UNAVAILABLE); } },
+      myanimelistAdapter: { enabled: false },
+      tmdbAdapter: { async searchMedia() { throw new ProviderError(PROVIDER_ERROR_CODES.ERROR); } },
+      rawgAdapter: { async searchMedia() { throw new ProviderError(PROVIDER_ERROR_CODES.TIMEOUT); } }
+    });
+    const failedResponse = await request(allFailed).get('/api/media/search?type=all&q=offline');
+    assert.equal(failedResponse.status, 503);
+    assert.deepEqual(failedResponse.body, {
+      error: {
+        code: 'PROVIDERS_UNAVAILABLE',
+        message: 'The configured providers are currently unavailable.',
+        details: []
+      }
+    });
+  });
+
+  it('preserves independent lane pages and skips exhausted lanes on continuation', async () => {
+    const calls = { anilist: [], tmdb: [], rawg: [] };
+    const anilist = {
+      async searchAnime(options) {
+        calls.anilist.push(options);
+        return { results: [`anime-${options.page}`], pagination: { page: options.page, perPage: 12, hasMore: options.page < 3 } };
+      }
+    };
+    const tmdb = {
+      async searchMedia(options) {
+        calls.tmdb.push(options);
+        const hasMore = options.type === 'tv';
+        return { results: [`${options.type}-${options.page}`], pagination: { page: options.page, perPage: 20, hasMore } };
+      }
+    };
+    const rawg = {
+      async searchMedia(options) {
+        calls.rawg.push(options);
+        return { results: [`game-${options.page}`], pagination: { page: options.page, perPage: 20, hasMore: true } };
+      }
+    };
+    const app = createApp({ anilistAdapter: anilist, myanimelistAdapter: { enabled: false }, tmdbAdapter: tmdb, rawgAdapter: rawg });
+
+    const first = await request(app).get('/api/media/search?type=all&q=zelda');
+    const cursor = first.body.pagination.continuation;
+    const second = await request(app)
+      .get(`/api/media/search?type=all&q=zelda&page=2&cursor=${encodeURIComponent(cursor)}`);
+
+    assert.equal(first.status, 200);
+    assert.equal(second.status, 200);
+    assert.deepEqual(first.body.results, ['anime-1', 'movie-1', 'tv-1', 'game-1']);
+    assert.deepEqual(second.body.results, ['anime-2', 'tv-2', 'game-2']);
+    assert.deepEqual(calls.anilist.map((options) => options.page), [1, 2]);
+    assert.deepEqual(calls.tmdb.map((options) => [options.type, options.page]), [
+      ['movie', 1], ['tv', 1], ['tv', 2]
+    ]);
+    assert.deepEqual(calls.rawg.map((options) => options.page), [1, 2]);
+    assert.equal(second.body.pagination.page, 2);
+    assert.deepEqual(second.body.pagination.providers, {
+      anilist: { page: 2, perPage: 12, hasMore: true },
+      tmdb: { page: 2, perPage: 20, hasMore: true },
+      rawg: { page: 2, perPage: 20, hasMore: true }
+    });
+  });
+
+  it('pins the Anime fallback provider across Combined Search pages', async () => {
+    const anilistCalls = [];
+    const myanimelistCalls = [];
+    const app = createApp({
+      anilistAdapter: {
+        async searchAnime(options) {
+          anilistCalls.push(options);
+          throw new ProviderError(PROVIDER_ERROR_CODES.UNAVAILABLE);
+        }
+      },
+      myanimelistAdapter: {
+        enabled: true,
+        async searchAnime(options) {
+          myanimelistCalls.push(options);
+          return { results: [`anime-${options.page}`], pagination: { page: options.page, perPage: 12, hasMore: options.page < 2 } };
+        }
+      },
+      tmdbAdapter: { async searchMedia() { return { results: [], pagination: { page: 1, perPage: 20, hasMore: false } }; } },
+      rawgAdapter: { async searchMedia() { return { results: [], pagination: { page: 1, perPage: 20, hasMore: false } }; } }
+    });
+
+    const first = await request(app).get('/api/media/search?type=all&q=naruto');
+    const second = await request(app)
+      .get(`/api/media/search?type=all&q=naruto&page=2&cursor=${encodeURIComponent(first.body.pagination.continuation)}`);
+
+    assert.equal(first.status, 200);
+    assert.equal(second.status, 200);
+    assert.equal(first.body.pagination.providers.myanimelist.page, 1);
+    assert.equal(second.body.pagination.providers.myanimelist.page, 2);
+    assert.deepEqual(first.body.providerErrors, [{
+      provider: 'anilist',
+      code: 'PROVIDER_UNAVAILABLE',
+      message: 'AniList is currently unavailable.'
+    }]);
+    assert.deepEqual(anilistCalls.map((options) => options.page), [1]);
+    assert.deepEqual(myanimelistCalls.map((options) => options.page), [1, 2]);
+    assert.deepEqual(second.body.results, ['anime-2']);
+  });
+
+  it('retries only a failed lane and does not refetch successful lanes', async () => {
+    const calls = { anilist: 0, tmdb: 0, rawg: 0 };
+    const app = createApp({
+      anilistAdapter: { async searchAnime() { calls.anilist += 1; return { results: ['anime'], pagination: { page: 1, perPage: 12, hasMore: false } }; } },
+      myanimelistAdapter: { enabled: false },
+      tmdbAdapter: { async searchMedia(options) { calls.tmdb += 1; return { results: [options.type], pagination: { page: 1, perPage: 20, hasMore: false } }; } },
+      rawgAdapter: {
+        async searchMedia() {
+          calls.rawg += 1;
+          if (calls.rawg === 1) throw new ProviderError(PROVIDER_ERROR_CODES.UNAVAILABLE, 'private RAWG diagnostic');
+          return { results: ['recovered-game'], pagination: { page: 1, perPage: 20, hasMore: false } };
+        }
+      }
+    });
+
+    const first = await request(app).get('/api/media/search?type=all&q=zelda');
+    const retry = await request(app)
+      .get(`/api/media/search?type=all&q=zelda&page=2&cursor=${encodeURIComponent(first.body.pagination.continuation)}&retryProvider=rawg`);
+
+    assert.equal(first.status, 200);
+    assert.deepEqual(first.body.providerErrors, [{
+      provider: 'rawg',
+      code: 'PROVIDER_UNAVAILABLE',
+      message: 'RAWG is currently unavailable.'
+    }]);
+    assert.equal(retry.status, 200);
+    assert.deepEqual(retry.body.results, ['recovered-game']);
+    assert.deepEqual(retry.body.providerErrors, []);
+    assert.equal(retry.body.pagination.hasMore, false);
+    assert.equal(retry.body.pagination.continuation, null);
+    assert.deepEqual(calls, { anilist: 1, tmdb: 2, rawg: 2 });
+    assert.equal(first.body.pagination.continuation.includes('private'), false);
+  });
+
+  it('rejects Combined Search provider pins and invalid or mismatched cursors before calling lanes', async () => {
+    const calls = { anilist: 0, tmdb: 0, rawg: 0 };
+    const adapters = {
+      anilistAdapter: { async searchAnime() { calls.anilist += 1; return { results: [], pagination: { page: 1, perPage: 12, hasMore: false } }; } },
+      myanimelistAdapter: { enabled: false },
+      tmdbAdapter: { async searchMedia() { calls.tmdb += 1; return { results: [], pagination: { page: 1, perPage: 20, hasMore: false } }; } },
+      rawgAdapter: { async searchMedia() { calls.rawg += 1; return { results: [], pagination: { page: 1, perPage: 20, hasMore: false } }; } }
+    };
+    const app = createApp(adapters);
+
+    const providerResponse = await request(app).get('/api/media/search?type=all&q=zelda&provider=rawg');
+    const cursorResponse = await request(app).get('/api/media/search?type=all&q=zelda&page=2&cursor=not-a-cursor');
+
+    assert.equal(providerResponse.status, 400);
+    assert.equal(cursorResponse.status, 400);
+    assert.equal(calls.anilist + calls.tmdb + calls.rawg, 0);
   });
 });

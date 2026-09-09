@@ -16,7 +16,7 @@ const NOT_FOUND_ERROR = {
   details: []
 };
 
-const SEARCH_QUERY_FIELDS = new Set(['type', 'q', 'page', 'perPage', 'includeAdult', 'provider']);
+const SEARCH_QUERY_FIELDS = new Set(['type', 'q', 'page', 'perPage', 'includeAdult', 'provider', 'cursor', 'retryProvider']);
 
 function validationError(details) {
   return {
@@ -48,9 +48,9 @@ function validateMediaSearchQuery(query) {
 
   const validType = hasSingleValue('type') && MEDIA_SEARCH_TYPES.includes(searchQuery.type);
   if (!Object.hasOwn(searchQuery, 'type')) {
-    details.push({ field: 'type', message: 'type is required and must be exactly "anime", "movie", "tv", or "game".' });
+    details.push({ field: 'type', message: 'type is required and must be exactly "anime", "movie", "tv", "game", or "all".' });
   } else if (!validType) {
-    details.push({ field: 'type', message: 'type must be exactly "anime", "movie", "tv", or "game".' });
+    details.push({ field: 'type', message: 'type must be exactly "anime", "movie", "tv", "game", or "all".' });
   }
 
   let trimmedQuery;
@@ -93,14 +93,44 @@ function validateMediaSearchQuery(query) {
 
   let provider;
   if (Object.hasOwn(searchQuery, 'provider')) {
-    const providers = searchQuery.type === 'anime'
-      ? ['anilist', 'myanimelist']
-      : searchQuery.type === 'game' ? ['rawg'] : ['tmdb'];
-    if (!hasSingleValue('provider') || !providers.includes(searchQuery.provider)) {
-      details.push({ field: 'provider', message: `provider must be ${providers.join(' or ')}.` });
+    if (searchQuery.type === 'all') {
+      details.push({ field: 'provider', message: 'provider cannot be used with type "all".' });
     } else {
-      provider = searchQuery.provider;
+      const providers = searchQuery.type === 'anime'
+        ? ['anilist', 'myanimelist']
+        : searchQuery.type === 'game' ? ['rawg'] : ['tmdb'];
+      if (!hasSingleValue('provider') || !providers.includes(searchQuery.provider)) {
+        details.push({ field: 'provider', message: `provider must be ${providers.join(' or ')}.` });
+      } else {
+        provider = searchQuery.provider;
+      }
     }
+  }
+
+  let cursor;
+  if (Object.hasOwn(searchQuery, 'cursor')) {
+    if (searchQuery.type !== 'all') {
+      details.push({ field: 'cursor', message: 'cursor is only supported for type "all".' });
+    } else if (!hasSingleValue('cursor') || typeof searchQuery.cursor !== 'string' || !searchQuery.cursor) {
+      details.push({ field: 'cursor', message: 'cursor must be a non-empty continuation value.' });
+    } else {
+      cursor = searchQuery.cursor;
+    }
+  }
+
+  let retryProvider;
+  if (Object.hasOwn(searchQuery, 'retryProvider')) {
+    if (searchQuery.type !== 'all') {
+      details.push({ field: 'retryProvider', message: 'retryProvider is only supported for type "all".' });
+    } else if (!hasSingleValue('retryProvider') || !['anilist', 'myanimelist', 'tmdb', 'rawg'].includes(searchQuery.retryProvider)) {
+      details.push({ field: 'retryProvider', message: 'retryProvider must be anilist, myanimelist, tmdb, or rawg.' });
+    } else {
+      retryProvider = searchQuery.retryProvider;
+    }
+  }
+
+  if (retryProvider && !cursor) {
+    details.push({ field: 'retryProvider', message: 'retryProvider requires cursor.' });
   }
 
   if (details.length > 0) return validationError(details);
@@ -110,7 +140,9 @@ function validateMediaSearchQuery(query) {
     perPage,
     includeAdult,
     type: searchQuery.type,
-    provider
+    provider,
+    cursor,
+    retryProvider
   };
 }
 
@@ -157,6 +189,11 @@ export function createApp({
       const result = await mediaSearch.search(validated);
       response.status(200).json(result);
     } catch (error) {
+      if (error?.validationDetails) {
+        const validation = validationError(error.validationDetails);
+        response.status(validation.status).json(validation.body);
+        return;
+      }
       if (error?.combined) {
         combinedFailureResponse(response, error.mediaType ?? validated.type);
         return;
