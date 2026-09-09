@@ -13,7 +13,7 @@
     "dev:client": "vite --config client/vite.config.js",
     "start": "node server/index.js",
     "test": "npm run test:server && npm run test:client",
-    "test:server": "node --test test/http.test.js test/media.test.js test/examples.test.js test/anilist.test.js test/myanimelist.test.js test/tmdb.test.js test/media-search.test.js test/environment.test.js",
+    "test:server": "node --test test/http.test.js test/media.test.js test/examples.test.js test/anilist.test.js test/myanimelist.test.js test/tmdb.test.js test/rawg.test.js test/media-search.test.js test/environment.test.js",
     "test:client": "vitest run",
     "examples:inspect": "node scripts/inspect-examples.js",
     "build": "vite build --config client/vite.config.js",

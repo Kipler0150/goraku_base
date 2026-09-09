@@ -1,0 +1,248 @@
+import { createMedia } from '../../shared/media.js';
+import { ProviderError, PROVIDER_ERROR_CODES } from './errors.js';
+
+export const RAWG_ENDPOINT = 'https://api.rawg.io/api/games';
+export const RAWG_TIMEOUT_MS = 5_000;
+export const RAWG_PAGE_SIZE = 20;
+
+const ERROR_MESSAGES = Object.freeze({
+  [PROVIDER_ERROR_CODES.TIMEOUT]: 'RAWG did not respond within the allowed time.',
+  [PROVIDER_ERROR_CODES.RATE_LIMITED]: 'RAWG rate limit reached.',
+  [PROVIDER_ERROR_CODES.INVALID_RESPONSE]: 'RAWG returned an invalid response.',
+  [PROVIDER_ERROR_CODES.UNAVAILABLE]: 'RAWG is currently unavailable.',
+  [PROVIDER_ERROR_CODES.ERROR]: 'RAWG request failed.'
+});
+
+function providerError(code) {
+  return new ProviderError(code, ERROR_MESSAGES[code]);
+}
+
+function invalidResponse() {
+  return providerError(PROVIDER_ERROR_CODES.INVALID_RESPONSE);
+}
+
+function assertObject(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalidResponse();
+  return value;
+}
+
+function nullableString(value) {
+  if (value == null) return null;
+  if (typeof value !== 'string') throw invalidResponse();
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function normalizeDate(value) {
+  const date = nullableString(value);
+  if (date == null) return null;
+  const match = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/.exec(date);
+  if (!match) throw invalidResponse();
+  return {
+    year: Number(match[1]),
+    month: match[2] ? Number(match[2]) : null,
+    day: match[3] ? Number(match[3]) : null
+  };
+}
+
+function normalizeDescription(value) {
+  const description = nullableString(value);
+  if (description == null) return null;
+
+  return description
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<br\s*\/?\s*>/gi, '\n')
+    .replace(/<\/(?:p|div|li|h[1-6]|blockquote)>/gi, '\n')
+    .replace(/<(?:p|div|li|h[1-6]|blockquote)(?:\s[^>]*)?>/gi, '\n')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => line.replace(/[^\S\n]+/g, ' ').trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim() || null;
+}
+
+function normalizeProviderId(value) {
+  if (!Number.isInteger(value) || value < 1) throw invalidResponse();
+  return String(value);
+}
+
+function normalizeRating(value) {
+  if (value == null) return null;
+  if (!Number.isFinite(value) || value < 0 || value > 5) throw invalidResponse();
+  return { value, max: 5 };
+}
+
+function normalizeNamedValues(value, nestedField = null) {
+  if (value == null) return [];
+  if (!Array.isArray(value)) throw invalidResponse();
+
+  return value.map((entry) => {
+    const item = assertObject(entry);
+    const namedValue = nestedField ? item[nestedField] : item;
+    if (namedValue == null) return null;
+    return nullableString(assertObject(namedValue).name);
+  }).filter(Boolean);
+}
+
+function normalizeAdultClassification(value) {
+  if (value == null) return null;
+  const classification = assertObject(value);
+  const name = nullableString(classification.name)?.toLowerCase();
+  const slug = nullableString(classification.slug)?.toLowerCase();
+  if (name === 'adults only' || slug === 'adults-only') return true;
+  return false;
+}
+
+function normalizeReleaseStatus(value) {
+  if (value == null) return 'UNKNOWN';
+  if (typeof value !== 'boolean') throw invalidResponse();
+  return value ? 'ANNOUNCED' : 'UNKNOWN';
+}
+
+function normalizeResult(value) {
+  const item = assertObject(value);
+  const description = Object.hasOwn(item, 'description_raw') && item.description_raw != null
+    ? item.description_raw
+    : item.description;
+
+  try {
+    return createMedia({
+      provider: 'rawg',
+      providerId: normalizeProviderId(item.id),
+      type: 'GAME',
+      title: nullableString(item.name),
+      originalTitle: null,
+      alternativeTitles: [],
+      description: normalizeDescription(description),
+      image: nullableString(item.background_image),
+      bannerImage: null,
+      releaseDate: normalizeDate(item.released),
+      genres: normalizeNamedValues(item.genres),
+      providerRating: normalizeRating(item.rating),
+      releaseStatus: normalizeReleaseStatus(item.tba),
+      creators: [],
+      isAdult: normalizeAdultClassification(item.esrb_rating),
+      metadata: {
+        platforms: normalizeNamedValues(item.platforms, 'platform'),
+        developers: normalizeNamedValues(item.developers),
+        publishers: normalizeNamedValues(item.publishers)
+      }
+    });
+  } catch (error) {
+    if (error instanceof ProviderError) throw error;
+    throw invalidResponse();
+  }
+}
+
+function normalizePayload(payload, page, perPage, includeAdult) {
+  const root = assertObject(payload);
+  if (!Array.isArray(root.results)) throw invalidResponse();
+  if (!Object.hasOwn(root, 'next') || (root.next !== null && typeof root.next !== 'string')) {
+    throw invalidResponse();
+  }
+
+  return {
+    results: root.results
+      .map(normalizeResult)
+      .filter((media) => includeAdult || media.isAdult !== true),
+    pagination: {
+      page,
+      perPage,
+      hasMore: root.next !== null
+    }
+  };
+}
+
+function errorForStatus(status) {
+  if (status === 401 || status === 403 || status === 503) return providerError(PROVIDER_ERROR_CODES.UNAVAILABLE);
+  if (status === 429) return providerError(PROVIDER_ERROR_CODES.RATE_LIMITED);
+  if (status === 408 || status === 504) return providerError(PROVIDER_ERROR_CODES.TIMEOUT);
+  return providerError(PROVIDER_ERROR_CODES.ERROR);
+}
+
+function validateSearchOptions({ type, query, page, perPage, includeAdult }) {
+  if (type !== 'game' || typeof query !== 'string' || !query.trim()) throw invalidResponse();
+  if (!Number.isInteger(page) || page < 1 || !Number.isInteger(perPage) || perPage < 1) throw invalidResponse();
+  if (typeof includeAdult !== 'boolean') throw invalidResponse();
+}
+
+/**
+ * Create the server-side RAWG game search boundary.
+ *
+ * @param {{apiKey?: string, request?: Function, endpoint?: string, timeoutMs?: number}} options
+ */
+export function createRAWGAdapter({
+  apiKey = process.env.RAWG_API_KEY,
+  request = globalThis.fetch,
+  endpoint = RAWG_ENDPOINT,
+  timeoutMs = RAWG_TIMEOUT_MS
+} = {}) {
+  if (typeof request !== 'function') throw new TypeError('An HTTP request function is required.');
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new RangeError('timeoutMs must be positive.');
+  const normalizedKey = typeof apiKey === 'string' ? apiKey.trim() : '';
+
+  return {
+    enabled: Boolean(normalizedKey),
+    async searchMedia(options = {}) {
+      const {
+        type = 'game',
+        query,
+        page = 1,
+        perPage = RAWG_PAGE_SIZE,
+        includeAdult = true
+      } = options;
+      validateSearchOptions({ type, query, page, perPage, includeAdult });
+      if (!normalizedKey) throw providerError(PROVIDER_ERROR_CODES.UNAVAILABLE);
+
+      const url = new URL(endpoint);
+      url.searchParams.set('key', normalizedKey);
+      url.searchParams.set('search', query.trim());
+      url.searchParams.set('page', String(page));
+      url.searchParams.set('page_size', String(perPage));
+
+      const controller = new AbortController();
+      let timedOut = false;
+      let timeoutHandle;
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+          reject(providerError(PROVIDER_ERROR_CODES.TIMEOUT));
+        }, timeoutMs);
+      });
+
+      try {
+        const requestResult = await Promise.race([
+          Promise.resolve().then(() => request(url, {
+            method: 'GET',
+            headers: { accept: 'application/json' },
+            signal: controller.signal
+          })),
+          timeoutPromise
+        ]);
+
+        if (!requestResult || typeof requestResult !== 'object') throw invalidResponse();
+        if ((requestResult.status !== undefined && (requestResult.status < 200 || requestResult.status >= 300)) || requestResult.ok === false) {
+          throw errorForStatus(requestResult.status);
+        }
+        if (typeof requestResult.json !== 'function') throw invalidResponse();
+
+        let payload;
+        try {
+          payload = await requestResult.json();
+        } catch {
+          throw invalidResponse();
+        }
+        return normalizePayload(payload, page, perPage, includeAdult);
+      } catch (error) {
+        if (error instanceof ProviderError) throw error;
+        if (timedOut || error?.name === 'AbortError') throw providerError(PROVIDER_ERROR_CODES.TIMEOUT);
+        throw providerError(PROVIDER_ERROR_CODES.ERROR);
+      } finally {
+        clearTimeout(timeoutHandle);
+      }
+    }
+  };
+}

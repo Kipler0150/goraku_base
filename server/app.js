@@ -2,6 +2,7 @@ import express from 'express';
 import { createAniListAdapter } from './providers/anilist.js';
 import { createMyAnimeListAdapter } from './providers/myanimelist.js';
 import { createTMDBAdapter } from './providers/tmdb.js';
+import { createRAWGAdapter } from './providers/rawg.js';
 import {
   createMediaSearchService,
   formatProviderFailure,
@@ -130,7 +131,7 @@ export function createApp({
   anilistAdapter = createAniListAdapter(),
   myanimelistAdapter = createMyAnimeListAdapter(),
   tmdbAdapter = createTMDBAdapter(),
-  rawgAdapter
+  rawgAdapter = createRAWGAdapter()
 } = {}) {
   const app = express();
   const mediaSearch = createMediaSearchService({ anilistAdapter, myanimelistAdapter, tmdbAdapter, rawgAdapter });
