@@ -8,7 +8,7 @@ loadLocalEnvironment();
 const port = Number.parseInt(process.env.PORT ?? '3001', 10);
 const databasePool = process.env.DATABASE_URL ? createDatabasePool() : null;
 const authService = databasePool ? createAuthService({ pool: databasePool }) : null;
-const app = createApp({ authService });
+const app = createApp({ authService, databasePool });
 const server = app.listen(port, '0.0.0.0', () => {
   console.log(`Goraku Base API listening on http://localhost:${port}`);
 });

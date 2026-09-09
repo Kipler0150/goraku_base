@@ -1,5 +1,6 @@
 import express from 'express';
 import { createAuthService } from './auth.js';
+import { createLibraryRepository } from './library.js';
 import {
   createAuthRouter,
   createMutationOriginMiddleware,
@@ -16,6 +17,7 @@ import {
   MEDIA_SEARCH_TYPES,
   providersUnavailable
 } from './media-search.js';
+import { createLibraryRouter } from './library-http.js';
 
 const NOT_FOUND_ERROR = {
   code: 'NOT_FOUND',
@@ -169,6 +171,7 @@ export function createApp({
   enableTestErrorRoute = false,
   databasePool = null,
   authService = databasePool ? createAuthService({ pool: databasePool }) : null,
+  libraryRepository = databasePool ? createLibraryRepository({ pool: databasePool }) : null,
   appOrigin = process.env.APP_ORIGIN ?? DEFAULT_APP_ORIGIN,
   secureCookies = process.env.NODE_ENV === 'production',
   anilistAdapter = createAniListAdapter(),
@@ -185,6 +188,7 @@ export function createApp({
   app.use(express.json());
 
   app.use('/api/auth', createAuthRouter({ authService, secureCookies }));
+  app.use('/api/library', createLibraryRouter({ libraryRepository, authService }));
 
   app.get('/api/health', (_request, response) => {
     response.status(200).json({
