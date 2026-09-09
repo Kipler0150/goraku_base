@@ -17,6 +17,7 @@ const PROVIDERS = Object.freeze({
   tmdb: { label: 'TMDB', url: TMDB_URL },
   rawg: { label: 'RAWG', url: RAWG_URL }
 });
+const PROVIDER_ORDER = Object.freeze(['anilist', 'myanimelist', 'tmdb', 'rawg']);
 
 function ConnectionStatus({ status, error, onRetry }) {
   const isLoading = status === 'loading';
@@ -215,8 +216,11 @@ function getProviderLabel(provider) {
 }
 
 function getCurrentProviders(search) {
-  const resultProviders = [...new Set(search.state.results.map((media) => media.provider))];
-  if (resultProviders.length > 0) return resultProviders;
+  const resultProviders = new Set(search.state.results.map((media) => media.provider));
+  const orderedProviders = PROVIDER_ORDER.filter((provider) => resultProviders.has(provider));
+  const unknownProviders = [...resultProviders].filter((provider) => !PROVIDERS[provider]);
+  const providers = [...orderedProviders, ...unknownProviders];
+  if (providers.length > 0) return providers;
   if (search.state.source && search.state.source !== 'combined') return [search.state.source];
   if (search.type === 'anime') return ['anilist', 'myanimelist'];
   return [];

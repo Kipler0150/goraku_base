@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App.jsx';
 
@@ -137,6 +137,12 @@ describe('Games and Combined Search experience', () => {
     expect(screen.getByText('RAWG is temporarily unavailable.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retry RAWG search' })).toBeInTheDocument();
     expect(screen.queryByText('RAWG rate limit reached.')).not.toBeInTheDocument();
+
+    const attribution = document.querySelector('.search-attribution');
+    expect(attribution).toHaveTextContent('UNOFFICIAL ANILIST / TMDB / RAWG INTEGRATIONS');
+    expect(within(attribution).getByRole('link', { name: 'ANILIST' })).toHaveAttribute('href', 'https://anilist.co/');
+    expect(within(attribution).getByRole('link', { name: 'TMDB' })).toHaveAttribute('href', 'https://www.themoviedb.org/');
+    expect(within(attribution).getByRole('link', { name: 'RAWG' })).toHaveAttribute('href', 'https://rawg.io/');
     expect(screen.getAllByRole('link', { name: 'RAWG' }).every((link) => link.getAttribute('href') === 'https://rawg.io/')).toBe(true);
   });
 
