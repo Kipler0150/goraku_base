@@ -16,4 +16,4 @@ Phase 4 game search uses TheGamesDB as the default provider because it avoids th
 
 ## Consequences
 
-The public search contract does not change. The adapter owns TheGamesDB’s `apikey`, `name`, `fields`, `include`, and page translation, while the coordinator owns fallback and cursor policy. A TheGamesDB failure caused by a rate limit, malformed response, or generic request error is not automatically hidden by RAWG; only availability failures activate the fallback.
+The public search contract does not change. The adapter owns TheGamesDB’s `apikey`, `name`, `fields`, `include`, page translation, and safe 403 classification. The coordinator owns fallback and cursor policy. A TheGamesDB failure caused by a rate limit, malformed response, or generic request error is not automatically hidden by RAWG; only availability failures activate the fallback.

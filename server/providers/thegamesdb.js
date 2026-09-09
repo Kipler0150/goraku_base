@@ -159,9 +159,13 @@ function normalizePayload(payload, page, includeAdult) {
   };
 }
 
-function errorForStatus(status) {
+function errorForStatus(status, payload) {
+  if (status === 403) {
+    if (payload?.status === 'Invalid API key was provided.') return providerError(PROVIDER_ERROR_CODES.UNAVAILABLE);
+    return providerError(PROVIDER_ERROR_CODES.RATE_LIMITED);
+  }
   if (status === 401 || status === 404 || status === 503) return providerError(PROVIDER_ERROR_CODES.UNAVAILABLE);
-  if (status === 403 || status === 429) return providerError(PROVIDER_ERROR_CODES.RATE_LIMITED);
+  if (status === 429) return providerError(PROVIDER_ERROR_CODES.RATE_LIMITED);
   if (status === 408 || status === 504) return providerError(PROVIDER_ERROR_CODES.TIMEOUT);
   return providerError(PROVIDER_ERROR_CODES.ERROR);
 }
@@ -231,7 +235,15 @@ export function createTheGamesDBAdapter({
 
         if (!requestResult || typeof requestResult !== 'object') throw invalidResponse();
         if ((requestResult.status !== undefined && (requestResult.status < 200 || requestResult.status >= 300)) || requestResult.ok === false) {
-          throw errorForStatus(requestResult.status);
+          let errorPayload;
+          if (typeof requestResult.json === 'function') {
+            try {
+              errorPayload = await requestResult.json();
+            } catch {
+              errorPayload = null;
+            }
+          }
+          throw errorForStatus(requestResult.status, errorPayload);
         }
         if (typeof requestResult.json !== 'function') throw invalidResponse();
 

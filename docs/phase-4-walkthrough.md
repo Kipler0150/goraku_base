@@ -53,7 +53,7 @@ Without a provider pin, `type=game` tries TheGamesDB first and falls back to RAW
 
 ## TheGamesDB request and normalization
 
-The adapter calls `https://api.thegamesdb.net/v1.1/Games/ByGameName` with the server-side `apikey`, trimmed `name`, requested `page`, and selected `fields`/`include` values. TheGamesDB owns its provider page size, which is reported as 20 in normalized pagination. Requests have a bounded timeout, and HTTP, malformed-payload, timeout, and transport failures become stable provider errors.
+The adapter calls `https://api.thegamesdb.net/v1.1/Games/ByGameName` with the server-side `apikey`, trimmed `name`, requested `page`, and selected `fields`/`include` values. TheGamesDB owns its provider page size, which is reported as 20 in normalized pagination. Requests have a bounded timeout, and HTTP, malformed-payload, timeout, and transport failures become stable provider errors. The API documents 403 for both invalid keys and rate-cap responses, so the adapter reads the safe status text: an invalid-key response is an availability failure eligible for RAWG fallback, while other 403 responses remain rate-limited and do not fall back.
 
 TheGamesDB payloads stop at the adapter boundary. The client receives the shared `Media` shape:
 
@@ -161,12 +161,13 @@ npm run check
 
 The verified result is:
 
-- 69 server tests passed.
-- 29 client tests passed.
+- 72 server tests passed.
+- 30 client tests passed.
 - The Vite production build completed successfully.
 - The environment test confirmed blank `THEGAMESDB_API_KEY` and `RAWG_API_KEY` placeholders in the root and server examples and no game-provider key identifiers in client configuration/source.
 - A post-build scan found no `THEGAMESDB_API_KEY` or `RAWG_API_KEY` identifier in `client/dist`.
 - Adapter and HTTP fixtures confirmed missing credentials, provider failures, and upstream diagnostics are handled safely without live Provider calls.
+- HTTP and browser fixtures cover TheGamesDB page pinning, RAWG fallback page pinning, strict provider pins, non-fallback empty/error responses, and Combined TheGamesDB attribution.
 
 Relevant verification files include:
 

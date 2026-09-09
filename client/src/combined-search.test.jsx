@@ -146,6 +146,28 @@ describe('Games and Combined Search experience', () => {
     expect(screen.getAllByRole('link', { name: 'RAWG' }).every((link) => link.getAttribute('href') === 'https://rawg.io/')).toBe(true);
   });
 
+  it('attributes Combined Search results sourced from TheGamesDB', async () => {
+    fetch.mockImplementation((url) => {
+      if (url === '/api/health') return Promise.resolve(healthResponse());
+      return Promise.resolve(searchResponse(combinedPayload([
+        gameMedia('tgdb-1', 'TheGamesDB game', { platforms: ['PC'], developers: [], publishers: [] }, 'thegamesdb')
+      ], {
+        providers: { thegamesdb: { page: 1, perPage: 20, hasMore: false } }
+      })));
+    });
+    render(<App />);
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Search media type' }), { target: { value: 'all' } });
+    const input = screen.getByRole('searchbox', { name: 'Search all media by title' });
+    fireEvent.change(input, { target: { value: 'zelda' } });
+    fireEvent.submit(input.closest('form'));
+
+    expect(await screen.findByRole('heading', { name: 'Games' })).toBeInTheDocument();
+    const attribution = document.querySelector('.search-attribution');
+    expect(attribution).toHaveTextContent('UNOFFICIAL THEGAMESDB INTEGRATION');
+    expect(within(attribution).getByRole('link', { name: 'UNOFFICIAL THEGAMESDB INTEGRATION' })).toHaveAttribute('href', 'https://thegamesdb.net/');
+  });
+
   it('uses the opaque Combined cursor and retries only a failed provider without duplicates', async () => {
     let combinedRequestCount = 0;
     fetch.mockImplementation((url) => {

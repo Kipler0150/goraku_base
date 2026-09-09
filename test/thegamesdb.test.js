@@ -116,14 +116,32 @@ describe('TheGamesDB adapter', () => {
       });
     }
 
-    for (const [status, code, message] of [
+    for (const [status, code, message, body] of [
       [401, 'PROVIDER_UNAVAILABLE', 'TheGamesDB is currently unavailable.'],
-      [403, 'PROVIDER_RATE_LIMITED', 'TheGamesDB rate limit reached.'],
+      [403, 'PROVIDER_RATE_LIMITED', 'TheGamesDB rate limit reached.', { status: 'Monthly allowance exceeded.' }],
       [500, 'PROVIDER_ERROR', 'TheGamesDB request failed.']
     ]) {
-      const adapter = createTheGamesDBAdapter({ apiKey: 'fixture-tgdb-key', request: async () => response({}, status) });
+      const adapter = createTheGamesDBAdapter({ apiKey: 'fixture-tgdb-key', request: async () => response(body, status) });
       await assert.rejects(() => adapter.searchMedia({ query: 'failed' }), { code, message });
     }
+
+    const invalidKey = createTheGamesDBAdapter({
+      apiKey: 'fixture-tgdb-key',
+      request: async () => response({ code: 403, status: 'Invalid API key was provided.' }, 403)
+    });
+    await assert.rejects(() => invalidKey.searchMedia({ query: 'failed' }), {
+      code: 'PROVIDER_UNAVAILABLE',
+      message: 'TheGamesDB is currently unavailable.'
+    });
+
+    const nearMatch = createTheGamesDBAdapter({
+      apiKey: 'fixture-tgdb-key',
+      request: async () => response({ code: 403, status: 'Invalid API key was provided for this request.' }, 403)
+    });
+    await assert.rejects(() => nearMatch.searchMedia({ query: 'failed' }), {
+      code: 'PROVIDER_RATE_LIMITED',
+      message: 'TheGamesDB rate limit reached.'
+    });
   });
 
   it('maps request failures and timeouts without exposing diagnostics', async () => {

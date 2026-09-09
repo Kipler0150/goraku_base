@@ -474,6 +474,26 @@ describe('typed media search HTTP API', () => {
     assert.equal(rawg.calls.length, 1);
   });
 
+  it('does not fall back when an explicit TheGamesDB provider pin fails', async () => {
+    const rawg = createMediaMockAdapter();
+    const app = createApp({
+      thegamesdbAdapter: { async searchMedia() { throw new SharedProviderError(SHARED_PROVIDER_ERROR_CODES.UNAVAILABLE); } },
+      rawgAdapter: rawg.adapter
+    });
+
+    const response = await request(app).get('/api/media/search?type=game&q=zelda&provider=thegamesdb');
+
+    assert.equal(response.status, 503);
+    assert.deepEqual(response.body, {
+      error: {
+        code: 'PROVIDER_UNAVAILABLE',
+        message: 'TheGamesDB is currently unavailable.',
+        details: []
+      }
+    });
+    assert.equal(rawg.calls.length, 0);
+  });
+
   it('does not fall back from TheGamesDB rate limits or malformed provider responses', async () => {
     for (const error of [
       new SharedProviderError(SHARED_PROVIDER_ERROR_CODES.RATE_LIMITED),
@@ -491,6 +511,29 @@ describe('typed media search HTTP API', () => {
       assert.equal(response.body.error.code, error.code);
       assert.equal(rawg.calls.length, 0);
     }
+
+    const genericRAWG = createMediaMockAdapter();
+    const genericApp = createApp({
+      thegamesdbAdapter: { async searchMedia() { throw new SharedProviderError(SHARED_PROVIDER_ERROR_CODES.ERROR); } },
+      rawgAdapter: genericRAWG.adapter
+    });
+    const genericResponse = await request(genericApp).get('/api/media/search?type=game&q=zelda');
+    assert.equal(genericResponse.status, 503);
+    assert.equal(genericResponse.body.error.code, 'PROVIDER_ERROR');
+    assert.equal(genericRAWG.calls.length, 0);
+
+    const emptyRAWG = createMediaMockAdapter();
+    const emptyApp = createApp({
+      thegamesdbAdapter: createMediaMockAdapter({
+        results: [],
+        pagination: { page: 1, perPage: 20, hasMore: false }
+      }).adapter,
+      rawgAdapter: emptyRAWG.adapter
+    });
+    const emptyResponse = await request(emptyApp).get('/api/media/search?type=game&q=zelda');
+    assert.equal(emptyResponse.status, 200);
+    assert.equal(emptyResponse.body.source, 'thegamesdb');
+    assert.equal(emptyRAWG.calls.length, 0);
   });
 
   it('returns the final RAWG provider error when both game providers are unavailable', async () => {
@@ -820,6 +863,80 @@ describe('combined media search HTTP API', () => {
       tmdb: { page: 2, perPage: 20, hasMore: true },
       rawg: { page: 2, perPage: 20, hasMore: true }
     });
+  });
+
+  it('keeps TheGamesDB selected across Combined Search pages', async () => {
+    const thegamesdbCalls = [];
+    const app = createApp({
+      anilistAdapter: { async searchAnime() { return { results: [], pagination: { page: 1, perPage: 12, hasMore: false } }; } },
+      myanimelistAdapter: { enabled: false },
+      tmdbAdapter: { async searchMedia() { return { results: [], pagination: { page: 1, perPage: 20, hasMore: false } }; } },
+      thegamesdbAdapter: {
+        async searchMedia(options) {
+          thegamesdbCalls.push(options.page);
+          return { results: [`game-${options.page}`], pagination: { page: options.page, perPage: 20, hasMore: options.page < 2 } };
+        }
+      },
+      rawgAdapter: { enabled: false }
+    });
+
+    const first = await request(app).get('/api/media/search?type=all&q=zelda');
+    const second = await request(app)
+      .get(`/api/media/search?type=all&q=zelda&page=2&cursor=${encodeURIComponent(first.body.pagination.continuation)}`);
+
+    assert.equal(first.status, 200);
+    assert.equal(second.status, 200);
+    assert.deepEqual(first.body.results, ['game-1']);
+    assert.deepEqual(second.body.results, ['game-2']);
+    assert.deepEqual(thegamesdbCalls, [1, 2]);
+    assert.deepEqual(second.body.pagination.providers, {
+      anilist: { page: 1, perPage: 12, hasMore: false },
+      tmdb: { page: 1, perPage: 20, hasMore: false },
+      thegamesdb: { page: 2, perPage: 20, hasMore: false }
+    });
+  });
+
+  it('pins RAWG after TheGamesDB fallback across Combined Search pages', async () => {
+    const thegamesdbCalls = [];
+    const rawgCalls = [];
+    const app = createApp({
+      anilistAdapter: { async searchAnime() { return { results: [], pagination: { page: 1, perPage: 12, hasMore: false } }; } },
+      myanimelistAdapter: { enabled: false },
+      tmdbAdapter: { async searchMedia() { return { results: [], pagination: { page: 1, perPage: 20, hasMore: false } }; } },
+      thegamesdbAdapter: {
+        async searchMedia(options) {
+          thegamesdbCalls.push(options.page);
+          throw new SharedProviderError(SHARED_PROVIDER_ERROR_CODES.UNAVAILABLE);
+        }
+      },
+      rawgAdapter: {
+        async searchMedia(options) {
+          rawgCalls.push(options.page);
+          return { results: [`fallback-game-${options.page}`], pagination: { page: options.page, perPage: 20, hasMore: options.page < 2 } };
+        }
+      }
+    });
+
+    const first = await request(app).get('/api/media/search?type=all&q=zelda');
+    const second = await request(app)
+      .get(`/api/media/search?type=all&q=zelda&page=2&cursor=${encodeURIComponent(first.body.pagination.continuation)}`);
+
+    assert.equal(first.status, 200);
+    assert.equal(second.status, 200);
+    assert.deepEqual(first.body.results, ['fallback-game-1']);
+    assert.deepEqual(second.body.results, ['fallback-game-2']);
+    assert.deepEqual(thegamesdbCalls, [1]);
+    assert.deepEqual(rawgCalls, [1, 2]);
+    assert.deepEqual(second.body.pagination.providers, {
+      anilist: { page: 1, perPage: 12, hasMore: false },
+      tmdb: { page: 1, perPage: 20, hasMore: false },
+      rawg: { page: 2, perPage: 20, hasMore: false }
+    });
+    assert.deepEqual(second.body.providerErrors, [{
+      provider: 'thegamesdb',
+      code: 'PROVIDER_UNAVAILABLE',
+      message: 'TheGamesDB is currently unavailable.'
+    }]);
   });
 
   it('pins the Anime fallback provider across Combined Search pages', async () => {
