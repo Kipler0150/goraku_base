@@ -126,7 +126,8 @@ function formatApiError(error, fallback) {
 
 function getPublicMediaErrorKind(error) {
   if (error?.code === 'CAPABILITY_UNSUPPORTED' || error?.status === 501) return 'unsupported';
-  if (error?.code === 'PROVIDER_RATE_LIMITED' || error?.code === 'APPLICATION_RATE_LIMITED' || error?.status === 429) return 'rate-limited';
+  if (error?.code === 'APPLICATION_RATE_LIMITED' || error?.status === 429) return 'application-rate-limited';
+  if (error?.code === 'PROVIDER_RATE_LIMITED') return 'rate-limited';
   if (error?.code === 'INVALID_PAYLOAD') return 'invalid-payload';
   if (error?.code === 'PROVIDER_NOT_FOUND' || error?.status === 404) return 'empty';
   return 'unavailable';
@@ -538,6 +539,10 @@ function PublicMediaError({ error, onRetry, resource = 'Media' }) {
     'rate-limited': {
       title: 'Provider rate-limited.',
       message: 'The selected Provider is rate-limited.'
+    },
+    'application-rate-limited': {
+      title: 'Application rate-limited.',
+      message: 'The application is rate-limited. Please retry later.'
     },
     'invalid-payload': {
       title: 'Invalid response.',

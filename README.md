@@ -1,14 +1,14 @@
 # Goraku Base
 
-An entertainment bookmarking and tracking application for anime, movies, television, and video games. Phases 1–6 tracking slices now provide a runnable React, Express, and PostgreSQL local/staging foundation.
+An entertainment bookmarking and tracking application for anime, movies, television, and video games. Phases 1–7 provide a runnable React, Express, and PostgreSQL local/staging foundation; Phase 8 is reserved for UI refinement.
 
 ## Project status
 
-Phase 1: complete runnable foundation. Phase 2: complete anime search through Express with unofficial AniList integration and an optional unofficial MyAnimeList availability fallback, plus normalized MediaCards, pagination, loading/error states, and a temporary local adult-content filter. Phase 3: complete movie and TV title search through the server-side TMDB adapter with the same generic search surface, server-only configuration, attribution, and credential-free repository verification. Phase 4: complete TheGamesDB-primary game search with RAWG availability fallback and Combined Search with independent Provider Failures, cursor pagination, server-only configuration, attribution, and deterministic verification. Phase 5: complete local/staging PostgreSQL persistence, local email/password authentication, seven-day server-managed Sessions, secure cookies, mutation Origin validation, authenticated User context, and ownership-scoped Library Item CRUD for Library Status and favorite. Phase 6: complete for local/staging use, including User-owned Personal Ratings, Notes, Tags, Collections, media-specific Progress, focused filters, the authenticated Library editor, dedicated PostgreSQL verification, and the documented client/server boundary. Google authentication, account recovery, production rate limiting, and public deployment remain future work.
+Phase 1: complete runnable foundation. Phase 2: complete anime search through Express with unofficial AniList integration and an optional unofficial MyAnimeList availability fallback, plus normalized MediaCards, pagination, loading/error states, and a temporary local adult-content filter. Phase 3: complete movie and TV title search through the server-side TMDB adapter with the same generic search surface, server-only configuration, attribution, and credential-free repository verification. Phase 4: complete TheGamesDB-primary game search with RAWG availability fallback and Combined Search with independent Provider Failures, cursor pagination, server-only configuration, attribution, and deterministic verification. Phase 5: complete local/staging PostgreSQL persistence, local email/password authentication, seven-day server-managed Sessions, secure cookies, mutation Origin validation, authenticated User context, and ownership-scoped Library Item CRUD for Library Status and favorite. Phase 6: complete for local/staging use, including User-owned Personal Ratings, Notes, Tags, Collections, media-specific Progress, focused filters, the authenticated Library editor, dedicated PostgreSQL verification, and the documented client/server boundary. Phase 7: complete for local/staging use, including capability-driven Media details, supported Discovery, Provider-owned Recommendations, bounded public metadata caching, in-flight request sharing, per-IP Application Rate Limits, sensitive-data-safe runtime signals, functional client states, and dedicated verification. Phase 8 is planned for presentation refinement. Google authentication, account recovery, production hardening, and public deployment remain future work.
 
 ## Portfolio focus
 
-Goraku Base will expose an Express REST API consumed by a React frontend. The backend will aggregate and normalize AniList, TMDB, TheGamesDB, and RAWG metadata while PostgreSQL stores user-owned library information. The API will demonstrate HTTP semantics, validation, consistent errors, pagination, authentication, ownership authorization, caching, and rate-limit handling.
+Goraku Base exposes an Express REST API consumed by a React frontend. The backend aggregates and normalizes AniList, TMDB, TheGamesDB, and RAWG metadata while PostgreSQL stores user-owned library information. The API demonstrates HTTP semantics, validation, consistent errors, pagination, authentication, ownership authorization, caching, and rate-limit handling.
 
 ## Stack
 
@@ -73,7 +73,7 @@ The contract deliberately excludes user-owned Library Item fields such as person
 
 ## Planned features
 
-Media details, recommendations, additional media types/providers, production hardening, and deployment remain future work.
+Phase 8 presentation refinement, additional media types/providers, production hardening, and deployment remain future work. Phase 7 Recommendations are Provider-owned related Media lists, not personalized recommendations from a User's Library.
 
 ## Documentation
 
@@ -89,7 +89,11 @@ Media details, recommendations, additional media types/providers, production har
 - [Phase 5 PostgreSQL, authentication, and library walkthrough](docs/phase-5-walkthrough.md)
 - [Phase 6 personal tracking specification](.scratch/phase-6-tracking-enrichment/spec.md)
 - [Phase 6 personal tracking walkthrough](docs/phase-6-walkthrough.md)
+- [Phase 7 Discovery and runtime specification](.scratch/phase-7-discovery-runtime/spec.md)
+- [Phase 7 Discovery and runtime walkthrough](docs/phase-7-walkthrough.md)
+- [Phase 8 UI refinement boundary](.scratch/phase-8-ui-refinement/spec.md)
 - [ADR 0004: local authentication and future external identities](docs/adr/0004-local-auth-and-future-external-identities.md)
 - [ADR 0005: user-owned tracking enrichment](docs/adr/0005-user-owned-tracking-enrichment.md)
+- [ADR 0006: capability-driven Discovery and bounded Media Metadata caching](docs/adr/0006-capability-driven-discovery-and-bounded-cache.md)
 
-Future deployment documentation remains intentionally separate and is not claimed as verified by Phase 6. The implemented authentication and tracking slice is suitable for local development and controlled staging only.
+Future deployment documentation remains intentionally separate and is not claimed as verified for production. The implemented authentication, tracking, and Phase 7 Discovery slices are suitable for local development and controlled staging only.

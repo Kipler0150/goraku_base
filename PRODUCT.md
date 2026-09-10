@@ -16,11 +16,11 @@ Learners and portfolio reviewers who need a reproducible REST application, plus 
 
 ## Product Purpose
 
-Goraku Base is an entertainment discovery and personal tracking application. Its current local/staging surface lets a User search supported media, authenticate locally, own reference-only Library Items, and edit Personal Ratings, Notes, Tags, Collections, and media-specific Progress in the authenticated Library.
+Goraku Base is an entertainment discovery and personal tracking application. Its current local/staging surface lets a User search supported media, open normalized Media details, browse supported Discovery and Provider-owned Recommendation lists, authenticate locally, own reference-only Library Items, and edit Personal Ratings, Notes, Tags, Collections, and media-specific Progress in the authenticated Library.
 
 ## Positioning
 
-The project is a learning-oriented REST portfolio application: its observable browser-to-backend request path now supports provider-backed discovery and a private local/staging Library with an explicit, verifiable tracking surface.
+The project is a learning-oriented REST portfolio application: its observable browser-to-backend request path supports capability-driven Provider discovery and a private local/staging Library with an explicit, verifiable tracking surface.
 
 ## Operating Context
 
@@ -31,7 +31,7 @@ Local development uses native npm commands or Docker Compose. The health endpoin
 - The React client exposes the health proof, public media search, local authentication, and an ownership-scoped reference Library.
 - The browser uses a relative API URL; Express owns the API boundary and safe error envelopes.
 - Provider-owned Media, User-owned Library Items, and User-owned tracking data remain separate concepts.
-- Phase 6 tracking is implemented and verified for local/staging use; provider hydration, production hardening, and public deployment remain outside the verified surface.
+- Phase 6 tracking and Phase 7 Discovery enrichment/runtime reliability are implemented and verified for local/staging use. Phase 8 is reserved for presentation refinement. Provider hydration into Library reads, production hardening, and public deployment remain outside the verified surface.
 
 ## Brand Commitments
 

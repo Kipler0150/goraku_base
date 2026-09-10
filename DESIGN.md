@@ -17,4 +17,4 @@ Connectivity and data feedback use accessible status announcements with explicit
 
 ## Content boundary
 
-The page claims only verified local/staging behavior. Provider metadata remains external, and the completed Phase 6 tracking surface is presented only through the authenticated Library; provider hydration, production hardening, and public deployment remain future work.
+The page claims only verified local/staging behavior. Provider metadata remains external, and the completed Phase 6 tracking surface is presented only through the authenticated Library. The completed Phase 7 surface adds functional public details and Discovery states using the existing visual language; Phase 8 is the separate presentation-refinement phase. Provider hydration into Library reads, production hardening, and public deployment remain future work.
