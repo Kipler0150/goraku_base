@@ -157,10 +157,13 @@ function validateLibraryListQuery(query) {
 
   let libraryStatus;
   if (Object.hasOwn(listQuery, 'libraryStatus')) {
-    if (Array.isArray(listQuery.libraryStatus) || !LIBRARY_STATUS_VALUES.includes(listQuery.libraryStatus)) {
+    const normalizedStatus = typeof listQuery.libraryStatus === 'string'
+      ? listQuery.libraryStatus.toUpperCase()
+      : listQuery.libraryStatus;
+    if (Array.isArray(listQuery.libraryStatus) || !LIBRARY_STATUS_VALUES.includes(normalizedStatus)) {
       details.push({ field: 'libraryStatus', message: `libraryStatus must be one of ${LIBRARY_STATUS_VALUES.join(', ')}.` });
     } else {
-      libraryStatus = listQuery.libraryStatus;
+      libraryStatus = normalizedStatus;
     }
   }
 

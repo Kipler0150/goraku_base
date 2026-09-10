@@ -18,6 +18,11 @@ function libraryItem({ id = LIBRARY_ID, providerId = '42', favorite = false, lib
     providerId,
     libraryStatus,
     favorite,
+    personalRating: null,
+    note: null,
+    progress: null,
+    tags: [],
+    collections: [],
     createdAt: '2026-09-09T00:00:00.000Z',
     updatedAt: '2026-09-09T00:00:00.000Z'
   };

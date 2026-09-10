@@ -264,9 +264,19 @@ describe('PostgreSQL library HTTP API', () => {
       VALUES ($1, 'Repository Tag')
       RETURNING id
     `, [userId]);
+    const secondTag = await schemaPool.query(`
+      INSERT INTO tags (user_id, name)
+      VALUES ($1, 'Repository Secondary Tag')
+      RETURNING id
+    `, [userId]);
     const collection = await schemaPool.query(`
       INSERT INTO collections (user_id, name)
       VALUES ($1, 'Repository Collection')
+      RETURNING id
+    `, [userId]);
+    const secondCollection = await schemaPool.query(`
+      INSERT INTO collections (user_id, name)
+      VALUES ($1, 'Repository Secondary Collection')
       RETURNING id
     `, [userId]);
     await schemaPool.query(`
@@ -274,9 +284,17 @@ describe('PostgreSQL library HTTP API', () => {
       VALUES ($1, $2, $3)
     `, [userId, created.id, tag.rows[0].id]);
     await schemaPool.query(`
+      INSERT INTO library_item_tags (user_id, library_item_id, tag_id)
+      VALUES ($1, $2, $3)
+    `, [userId, created.id, secondTag.rows[0].id]);
+    await schemaPool.query(`
       INSERT INTO library_item_collections (user_id, library_item_id, collection_id)
       VALUES ($1, $2, $3)
     `, [userId, created.id, collection.rows[0].id]);
+    await schemaPool.query(`
+      INSERT INTO library_item_collections (user_id, library_item_id, collection_id)
+      VALUES ($1, $2, $3)
+    `, [userId, created.id, secondCollection.rows[0].id]);
 
     const updated = await repository.update({
       userId,
@@ -292,8 +310,14 @@ describe('PostgreSQL library HTTP API', () => {
     assert.equal(updated.personalRating, 8.5);
     assert.equal(updated.note, 'Repository note');
     assert.deepEqual(updated.progress, { watched: true });
-    assert.deepEqual(updated.tags, [{ id: tag.rows[0].id, name: 'Repository Tag' }]);
-    assert.deepEqual(updated.collections, [{ id: collection.rows[0].id, name: 'Repository Collection' }]);
+    assert.deepEqual(updated.tags, [
+      { id: secondTag.rows[0].id, name: 'Repository Secondary Tag' },
+      { id: tag.rows[0].id, name: 'Repository Tag' }
+    ]);
+    assert.deepEqual(updated.collections, [
+      { id: collection.rows[0].id, name: 'Repository Collection' },
+      { id: secondCollection.rows[0].id, name: 'Repository Secondary Collection' }
+    ]);
 
     const filtered = await repository.list({
       userId,
@@ -307,6 +331,21 @@ describe('PostgreSQL library HTTP API', () => {
     const collectionFiltered = await repository.list({ userId, collectionId: collection.rows[0].id });
     assert.deepEqual(tagFiltered.results.map(({ id }) => id), [created.id]);
     assert.deepEqual(collectionFiltered.results.map(({ id }) => id), [created.id]);
+    const secondaryTagFiltered = await repository.list({ userId, tagId: secondTag.rows[0].id, page: 1, perPage: 50 });
+    assert.deepEqual(secondaryTagFiltered.results.map(({ id }) => id), [created.id]);
+    assert.deepEqual(secondaryTagFiltered.pagination, { page: 1, perPage: 50, hasMore: false });
+
+    const empty = await repository.list({
+      userId,
+      libraryStatus: 'DROPPED',
+      favorite: false,
+      tagId: tag.rows[0].id,
+      collectionId: collection.rows[0].id,
+      page: 2,
+      perPage: 50
+    });
+    assert.deepEqual(empty.results, []);
+    assert.deepEqual(empty.pagination, { page: 2, perPage: 50, hasMore: false });
 
     const planning = await repository.list({ userId, libraryStatus: 'PLANNING' });
     assert.deepEqual(planning.results.map(({ id }) => id), [other.id]);

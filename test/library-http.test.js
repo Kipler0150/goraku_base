@@ -54,6 +54,10 @@ function createLibraryFixture() {
         calls.push({ method: 'list', ...input });
         const owned = [...items.values()]
           .filter((candidate) => candidate.userId === input.userId)
+          .filter((candidate) => input.libraryStatus === undefined || candidate.libraryStatus === input.libraryStatus)
+          .filter((candidate) => input.favorite === undefined || candidate.favorite === input.favorite)
+          .filter((candidate) => input.tagId === undefined || candidate.tags.some(({ id }) => id === input.tagId))
+          .filter((candidate) => input.collectionId === undefined || candidate.collections.some(({ id }) => id === input.collectionId))
           .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id))
           .map(({ userId, ...candidate }) => candidate);
         const start = (input.page - 1) * input.perPage;
@@ -173,6 +177,9 @@ describe('HTTP library routes', () => {
     const filtered = await request(app)
       .get(`/api/library?libraryStatus=COMPLETED&favorite=true&tagId=${tagId}&collectionId=${collectionId}&page=2&perPage=5`)
       .set('Cookie', SESSION_COOKIE);
+    const lowercaseStatus = await request(app)
+      .get('/api/library?libraryStatus=completed')
+      .set('Cookie', SESSION_COOKIE);
     const invalidStatus = await request(app)
       .get('/api/library?libraryStatus=published')
       .set('Cookie', SESSION_COOKIE);
@@ -184,7 +191,9 @@ describe('HTTP library routes', () => {
       .set('Cookie', SESSION_COOKIE);
 
     assert.equal(filtered.status, 200);
-    assert.deepEqual(fixture.calls.at(-1), {
+    assert.equal(lowercaseStatus.status, 200);
+    const listCalls = fixture.calls.filter((call) => call.method === 'list');
+    assert.deepEqual(listCalls[0], {
       method: 'list',
       userId: USER.id,
       page: 2,
@@ -194,10 +203,76 @@ describe('HTTP library routes', () => {
       tagId,
       collectionId
     });
+    assert.deepEqual(listCalls[1], {
+      method: 'list',
+      userId: USER.id,
+      page: 1,
+      perPage: 20,
+      libraryStatus: 'COMPLETED'
+    });
     assert.equal(invalidStatus.status, 400);
     assert.equal(invalidFavorite.status, 400);
     assert.equal(invalidTag.status, 400);
-    assert.equal(fixture.calls.filter((call) => call.method === 'list').length, 1);
+    assert.equal(fixture.calls.filter((call) => call.method === 'list').length, 2);
+  });
+
+  it('returns empty and combined filtered pages with stable pagination', async () => {
+    const fixture = createLibraryFixture();
+    const app = createApp({ authService: fixture.authService, libraryRepository: fixture.repository, appOrigin: APP_ORIGIN });
+    const focusTagId = '00000000-0000-4000-8000-000000000010';
+    const queueCollectionId = '00000000-0000-4000-8000-000000000011';
+    const otherCollectionId = '00000000-0000-4000-8000-000000000012';
+
+    const first = await request(app)
+      .post('/api/library')
+      .set('Origin', APP_ORIGIN)
+      .set('Cookie', SESSION_COOKIE)
+      .send({ provider: 'tmdb', type: 'movie', providerId: 'first' });
+    const second = await request(app)
+      .post('/api/library')
+      .set('Origin', APP_ORIGIN)
+      .set('Cookie', SESSION_COOKIE)
+      .send({ provider: 'tmdb', type: 'movie', providerId: 'second' });
+    await request(app)
+      .post('/api/library')
+      .set('Origin', APP_ORIGIN)
+      .set('Cookie', SESSION_COOKIE)
+      .send({ provider: 'tmdb', type: 'movie', providerId: 'third' });
+
+    Object.assign(fixture.items.get(first.body.id), {
+      libraryStatus: 'COMPLETED',
+      favorite: true,
+      tags: [{ id: focusTagId, name: 'Focus' }, { id: 'other-tag', name: 'Other' }],
+      collections: [{ id: queueCollectionId, name: 'Queue' }]
+    });
+    Object.assign(fixture.items.get(second.body.id), {
+      libraryStatus: 'COMPLETED',
+      favorite: true,
+      tags: [{ id: focusTagId, name: 'Focus' }],
+      collections: [{ id: otherCollectionId, name: 'Other queue' }]
+    });
+
+    const tagPageOne = await request(app)
+      .get(`/api/library?tagId=${focusTagId}&page=1&perPage=1`)
+      .set('Cookie', SESSION_COOKIE);
+    const tagPageTwo = await request(app)
+      .get(`/api/library?tagId=${focusTagId}&page=2&perPage=1`)
+      .set('Cookie', SESSION_COOKIE);
+    const combined = await request(app)
+      .get(`/api/library?libraryStatus=COMPLETED&favorite=true&tagId=${focusTagId}&collectionId=${queueCollectionId}&page=1&perPage=1`)
+      .set('Cookie', SESSION_COOKIE);
+    const empty = await request(app)
+      .get(`/api/library?libraryStatus=COMPLETED&favorite=false&tagId=${focusTagId}&collectionId=${queueCollectionId}&page=1&perPage=50`)
+      .set('Cookie', SESSION_COOKIE);
+
+    assert.deepEqual(tagPageOne.body.results.map(({ id }) => id), [second.body.id]);
+    assert.deepEqual(tagPageOne.body.pagination, { page: 1, perPage: 1, hasMore: true });
+    assert.deepEqual(tagPageTwo.body.results.map(({ id }) => id), [first.body.id]);
+    assert.deepEqual(tagPageTwo.body.pagination, { page: 2, perPage: 1, hasMore: false });
+    assert.deepEqual(combined.body.results.map(({ id }) => id), [first.body.id]);
+    assert.deepEqual(combined.body.pagination, { page: 1, perPage: 1, hasMore: false });
+    assert.deepEqual(empty.body.results, []);
+    assert.deepEqual(empty.body.pagination, { page: 1, perPage: 50, hasMore: false });
   });
 
   it('rejects unsupported identities, unknown fields, and invalid pagination', async () => {
