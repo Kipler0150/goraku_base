@@ -4,7 +4,7 @@ An entertainment bookmarking and tracking application for anime, movies, televis
 
 ## Project status
 
-Phase 1: complete runnable foundation. Phase 2: complete anime search through Express with unofficial AniList integration and an optional unofficial MyAnimeList availability fallback, plus normalized MediaCards, pagination, loading/error states, and a temporary local adult-content filter. Phase 3: complete movie and TV title search through the server-side TMDB adapter with the same generic search surface, server-only configuration, attribution, and credential-free repository verification. Phase 4: complete TheGamesDB-primary game search with RAWG availability fallback and Combined Search with independent Provider Failures, cursor pagination, server-only configuration, attribution, and deterministic verification. Phase 5.1-5.3: complete PostgreSQL schema/migrations, local email/password authentication, seven-day server-managed Sessions, secure cookies, mutation Origin validation, and authenticated User context. Library CRUD, Google authentication, and account recovery remain planned.
+Phase 1: complete runnable foundation. Phase 2: complete anime search through Express with unofficial AniList integration and an optional unofficial MyAnimeList availability fallback, plus normalized MediaCards, pagination, loading/error states, and a temporary local adult-content filter. Phase 3: complete movie and TV title search through the server-side TMDB adapter with the same generic search surface, server-only configuration, attribution, and credential-free repository verification. Phase 4: complete TheGamesDB-primary game search with RAWG availability fallback and Combined Search with independent Provider Failures, cursor pagination, server-only configuration, attribution, and deterministic verification. Phase 5: complete local/staging PostgreSQL persistence, local email/password authentication, seven-day server-managed Sessions, secure cookies, mutation Origin validation, authenticated User context, and ownership-scoped Library Item CRUD for Library Status and favorite. Google authentication, account recovery, production rate limiting, and public deployment remain future work.
 
 ## Portfolio focus
 
@@ -37,6 +37,9 @@ Useful commands:
 ```bash
 npm test          # HTTP, Media contract, and targeted client behavior
 npm run build     # production client build in client/dist
+npm run check     # credential-free tests, build, and client secret boundary
+npm run db:migrate  # apply pending PostgreSQL migrations to DATABASE_URL
+npm run test:integration  # PostgreSQL tests; requires TEST_DATABASE_URL=/goraku_test
 npm run examples:inspect  # print synthetic Media examples as JSON
 npm start         # Express only, useful for direct API checks
 curl http://localhost:3001/api/health
@@ -54,9 +57,9 @@ Open <http://localhost:5173>; the container client still calls `/api/health` rel
 
 Compose also starts a persistent PostgreSQL 16 service as `postgres`. Its default local connection is available to the server as `DATABASE_URL`; run `docker compose exec server npm run db:migrate` after the database reports healthy. Native migration runs use the server-only `DATABASE_URL` in `.env.local` (the placeholder is documented in `.env.example` and `server/.env.example`).
 
-PostgreSQL migration integration tests require the separate `goraku_test` database: set `TEST_DATABASE_URL` to that database URL and run `npm run test:integration`. The test refuses other database names and resets only that dedicated test database.
+PostgreSQL integration tests require the separate `goraku_test` database. Create it with `docker compose exec postgres createdb -U goraku goraku_test`, set `TEST_DATABASE_URL` to its URL, and run `npm run test:integration`. Each suite migrates a unique temporary schema inside that database and drops the schema during teardown; the test refuses other database names and never touches the normal `goraku` database. See the [Phase 5 walkthrough](docs/phase-5-walkthrough.md) for native, Docker, PowerShell, and troubleshooting commands.
 
-Local authentication is available when the server has a migrated `DATABASE_URL`. Use `POST /api/auth/register` or `POST /api/auth/login` with `{ "email": "...", "password": "..." }`; the server sets an HTTP-only `goraku_session` cookie. `GET /api/auth/me` reads the current User from that Session, and `POST /api/auth/logout` revokes only the current Session. Mutation requests must send the exact configured `APP_ORIGIN` (default `http://localhost:5173`). Library routes are the next Phase 5 slice.
+Local authentication and the first library slice are available when the server has a migrated `DATABASE_URL`. Use `POST /api/auth/register` or `POST /api/auth/login` with `{ "email": "...", "password": "..." }`; the server sets an HTTP-only `goraku_session` cookie. `GET /api/auth/me` reads the current User from that Session, and `POST /api/auth/logout` revokes only the current Session. Authenticated clients can use `GET|POST /api/library`, `PATCH /api/library/:id`, and `DELETE /api/library/:id` for reference-only Library Items with Library Status and favorite. Mutation requests must send the exact configured `APP_ORIGIN` (default `http://localhost:5173`).
 
 For a background verification run, use `docker compose up --build -d`, confirm both services with `docker compose ps`, check `curl.exe http://localhost:3001/api/health` and `curl.exe http://localhost:5173/api/health`, then stop everything with `docker compose down`. Compose is a local development path, not a production deployment recipe.
 
@@ -83,5 +86,7 @@ Media details, a personal library, favorites, ratings, notes, tags, collections,
 - [Phase 3 TMDB search walkthrough](docs/phase-3-walkthrough.md)
 - [Phase 4 TheGamesDB, RAWG fallback, and Combined Search specification](.scratch/phase-4-rawg-combined-search/spec.md)
 - [Phase 4 game providers and Combined Search walkthrough](docs/phase-4-walkthrough.md)
+- [Phase 5 PostgreSQL, authentication, and library walkthrough](docs/phase-5-walkthrough.md)
+- [ADR 0004: local authentication and future external identities](docs/adr/0004-local-auth-and-future-external-identities.md)
 
-Future deployment documentation remains intentionally separate and is not claimed as verified in Phase 1.
+Future deployment documentation remains intentionally separate and is not claimed as verified by Phase 5. The implemented authentication and library slice is suitable for local development and controlled staging only.

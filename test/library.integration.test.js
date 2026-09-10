@@ -3,55 +3,16 @@ import { after, before, describe, it } from 'node:test';
 import request from 'supertest';
 import { createApp } from '../server/app.js';
 import { closeDatabasePool, createDatabasePool } from '../server/db/client.js';
-import { runMigrations } from '../server/db/migrate.js';
+import {
+  assertSafeResponse,
+  assertDedicatedTestDatabase,
+  createMigratedSchema,
+  dropTestSchema,
+  sessionCookieValue,
+  testDatabaseUrl
+} from './support/postgres-integration.js';
 
 const APP_ORIGIN = 'http://localhost:5173';
-const testDatabaseUrl = process.env.TEST_DATABASE_URL;
-
-function assertDedicatedTestDatabase(databaseUrl) {
-  if (!databaseUrl) {
-    throw new Error('TEST_DATABASE_URL is required to run PostgreSQL integration tests.');
-  }
-
-  let databaseName;
-  try {
-    databaseName = decodeURIComponent(new URL(databaseUrl).pathname.slice(1));
-  } catch {
-    throw new Error('TEST_DATABASE_URL must be a valid PostgreSQL URL for a dedicated test database.');
-  }
-  if (databaseName !== 'goraku_test') {
-    throw new Error('TEST_DATABASE_URL must point to the dedicated goraku_test database.');
-  }
-}
-
-function quoteSchemaIdentifier(schema) {
-  return `"${schema}"`;
-}
-
-function createSchemaPool(pool, schema) {
-  const quotedSchema = quoteSchemaIdentifier(schema);
-
-  return {
-    async connect() {
-      const client = await pool.connect();
-      await client.query(`SET search_path TO ${quotedSchema}, public`);
-      return client;
-    },
-    async query(text, values) {
-      const client = await pool.connect();
-      try {
-        await client.query(`SET search_path TO ${quotedSchema}, public`);
-        return await client.query(text, values);
-      } finally {
-        client.release();
-      }
-    }
-  };
-}
-
-function cookieValue(response) {
-  return response.headers['set-cookie'][0].split(';', 1)[0];
-}
 
 function compareLibraryItemsNewestFirst(left, right) {
   const createdDifference = Date.parse(right.createdAt) - Date.parse(left.createdAt);
@@ -70,16 +31,13 @@ describe('PostgreSQL library HTTP API', () => {
   before(async () => {
     assertDedicatedTestDatabase(testDatabaseUrl);
     pool = createDatabasePool({ databaseUrl: testDatabaseUrl });
-    schemaName = `library_test_${process.pid}_${Date.now()}`;
-    await pool.query(`CREATE SCHEMA ${quoteSchemaIdentifier(schemaName)}`);
-    await runMigrations({ pool, schema: schemaName });
-    schemaPool = createSchemaPool(pool, schemaName);
+    ({ schemaName, schemaPool } = await createMigratedSchema(pool, 'library_test'));
     app = createApp({ databasePool: schemaPool, appOrigin: APP_ORIGIN });
   });
 
   after(async () => {
     if (pool) {
-      await pool.query(`DROP SCHEMA ${quoteSchemaIdentifier(schemaName)} CASCADE`);
+      await dropTestSchema(pool, schemaName);
       await closeDatabasePool(pool);
     }
   });
@@ -92,7 +50,8 @@ describe('PostgreSQL library HTTP API', () => {
         .set('Origin', APP_ORIGIN)
         .send({ email, password: 'correct horse battery staple!' });
       assert.equal(response.status, 201);
-      return cookieValue(response);
+      assertSafeResponse(response);
+      return sessionCookieValue(response);
     };
     const ownerCookie = await register(`library-owner-${suffix}@example.com`);
     const otherCookie = await register(`library-other-${suffix}@example.com`);
@@ -106,6 +65,7 @@ describe('PostgreSQL library HTTP API', () => {
     const second = await add(ownerCookie, { provider: 'tmdb', type: 'tv', providerId: '200' });
     const third = await add(ownerCookie, { provider: 'rawg', type: 'game', providerId: '300' });
     assert.equal(first.status, 201);
+    assertSafeResponse(first);
     assert.equal(first.body.libraryStatus, 'PLANNING');
     assert.equal(first.body.favorite, false);
     assert.deepEqual(
@@ -121,6 +81,7 @@ describe('PostgreSQL library HTTP API', () => {
     const pageTwo = await request(app)
       .get('/api/library?page=2&perPage=1')
       .set('Cookie', ownerCookie);
+    for (const response of [second, third, listed, pageOne, pageTwo]) assertSafeResponse(response);
     assert.equal(listed.status, 200);
     assert.deepEqual(listed.body.results.map(({ id }) => id), created.map(({ id }) => id));
     assert.deepEqual(listed.body.pagination, { page: 1, perPage: 20, hasMore: false });
@@ -140,6 +101,7 @@ describe('PostgreSQL library HTTP API', () => {
       .delete(`/api/library/${first.body.id}`)
       .set('Origin', APP_ORIGIN)
       .set('Cookie', otherCookie);
+    for (const response of [duplicate, otherList, otherUpdate, otherDelete]) assertSafeResponse(response);
     assert.equal(duplicate.status, 409);
     assert.deepEqual(otherList.body.results, []);
     assert.equal(otherUpdate.status, 404);
@@ -159,6 +121,8 @@ describe('PostgreSQL library HTTP API', () => {
       .delete(`/api/library/${first.body.id}`)
       .set('Origin', APP_ORIGIN)
       .set('Cookie', ownerCookie);
+    assertSafeResponse(updated);
+    assertSafeResponse(deleted);
     assert.equal(deleted.status, 204);
     assert.equal(deleted.text, '');
   });

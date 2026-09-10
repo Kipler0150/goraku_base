@@ -1,12 +1,12 @@
 # Goraku Base architecture and phased plan
 
-Status: Phases 1-4 are complete. The executable scope and acceptance criteria are recorded in the [Phase 1 specification](../.scratch/phase-1-foundation/spec.md), [Phase 2 anime search specification](../.scratch/phase-2-anilist-search/spec.md), [Phase 2 anime search walkthrough](phase-2-walkthrough.md), [Phase 3 TMDB search specification](../.scratch/phase-3-tmdb-search/spec.md), and [Phase 4 specification](../.scratch/phase-4-rawg-combined-search/spec.md).
+Status: Phases 1-5 are complete for their documented local/staging boundaries. The executable scope and acceptance criteria are recorded in the [Phase 1 specification](../.scratch/phase-1-foundation/spec.md), [Phase 2 anime search specification](../.scratch/phase-2-anilist-search/spec.md), [Phase 2 anime search walkthrough](phase-2-walkthrough.md), [Phase 3 TMDB search specification](../.scratch/phase-3-tmdb-search/spec.md), [Phase 4 specification](../.scratch/phase-4-rawg-combined-search/spec.md), and [Phase 5 walkthrough](phase-5-walkthrough.md).
 
 ## Purpose and scope
 
-Goraku Base is a personal entertainment bookmarking and tracking application, and a portfolio project demonstrating REST API development. Start with anime through AniList, movies and TV through TMDB, and games through RAWG. Manga, manhwa, comics, and additional providers are future extensions.
+Goraku Base is a personal entertainment bookmarking and tracking application, and a portfolio project demonstrating REST API development. Start with anime through AniList, movies and TV through TMDB, and games through TheGamesDB with RAWG fallback. Manga, manhwa, comics, and additional providers are future extensions.
 
-Keep React, JavaScript, CSS, Node.js with Express, and PostgreSQL. Develop locally first, with Docker support. Keep deployment instructions separate from the learning walkthrough. Authentication must permit a later integration such as Supabase Auth; no authentication vendor is selected yet.
+Keep React, JavaScript, CSS, Node.js with Express, and PostgreSQL. Develop locally first, with Docker support. Keep deployment instructions separate from the learning walkthrough. Phase 5 uses local email/password authentication with server-managed Sessions; a future external provider must attach explicitly to the stable internal User identity.
 
 ## Request flow
 
