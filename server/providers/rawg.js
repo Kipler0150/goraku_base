@@ -1,5 +1,6 @@
 import { createMedia } from '../../shared/media.js';
 import { ProviderError, PROVIDER_ERROR_CODES } from './errors.js';
+import { requestProviderJson } from './http.js';
 
 export const RAWG_ENDPOINT = 'https://api.rawg.io/api/games';
 export const RAWG_DETAILS_ENDPOINT = RAWG_ENDPOINT;
@@ -190,6 +191,13 @@ export function createRAWGAdapter({
     ? detailsEndpoint.trim()
     : RAWG_DETAILS_ENDPOINT).replace(/\/+$/, '');
 
+  const validateDiscoveryOptions = ({ page = 1, perPage = RAWG_PAGE_SIZE, includeAdult = true } = {}) => {
+    if (!Number.isInteger(page) || page < 1 || !Number.isInteger(perPage) || perPage < 1 || typeof includeAdult !== 'boolean') {
+      throw invalidResponse();
+    }
+    return { page, perPage, includeAdult };
+  };
+
   return {
     enabled: Boolean(normalizedKey),
     async searchMedia(options = {}) {
@@ -250,6 +258,48 @@ export function createRAWGAdapter({
       } finally {
         clearTimeout(timeoutHandle);
       }
+    },
+    async getPopular({ page = 1, perPage = RAWG_PAGE_SIZE, includeAdult = true } = {}) {
+      const options = validateDiscoveryOptions({ page, perPage, includeAdult });
+      if (!normalizedKey) throw providerError(PROVIDER_ERROR_CODES.UNAVAILABLE);
+      const url = new URL(endpoint);
+      url.searchParams.set('key', normalizedKey);
+      url.searchParams.set('ordering', '-added');
+      url.searchParams.set('page', String(page));
+      url.searchParams.set('page_size', String(perPage));
+      const payload = await requestProviderJson({
+        request,
+        url,
+        timeoutMs,
+        options: { method: 'GET', headers: { accept: 'application/json' } },
+        invalidResponse,
+        errorForStatus: (status) => errorForStatus(status)
+      });
+      return normalizePayload(payload, page, perPage, options.includeAdult);
+    },
+    async getRecommendations({ providerId, page = 1, perPage = RAWG_PAGE_SIZE, includeAdult = true } = {}) {
+      const options = validateDiscoveryOptions({ page, perPage, includeAdult });
+      if (typeof providerId !== 'string' || !/^[1-9]\d*$/.test(providerId.trim())) throw invalidResponse();
+      if (!normalizedKey) throw providerError(PROVIDER_ERROR_CODES.UNAVAILABLE);
+      const url = new URL(`${normalizedDetailsEndpoint}/${providerId.trim()}/suggested`);
+      url.searchParams.set('key', normalizedKey);
+      url.searchParams.set('page', String(page));
+      url.searchParams.set('page_size', String(perPage));
+      const payload = await requestProviderJson({
+        request,
+        url,
+        timeoutMs,
+        options: { method: 'GET', headers: { accept: 'application/json' } },
+        invalidResponse,
+        errorForStatus: (status) => errorForStatus(status, true)
+      });
+      return normalizePayload(payload, page, perPage, options.includeAdult);
+    },
+    getPopularMedia(options) {
+      return this.getPopular(options);
+    },
+    getMediaRecommendations(options) {
+      return this.getRecommendations(options);
     },
     async getMediaDetails({ providerId, includeAdult = true } = {}) {
       if (typeof providerId !== 'string' || !/^[1-9]\d*$/.test(providerId.trim())) {

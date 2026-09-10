@@ -1,5 +1,6 @@
 import { createMedia } from '../../shared/media.js';
 import { ProviderError, PROVIDER_ERROR_CODES } from './errors.js';
+import { requestProviderJson } from './http.js';
 
 export const ANILIST_ENDPOINT = 'https://graphql.anilist.co';
 export const ANILIST_TIMEOUT_MS = 5_000;
@@ -54,6 +55,49 @@ const DETAILS_GRAPHQL_QUERY = `
       episodes
       duration
       isAdult
+    }
+  }
+`;
+
+const DISCOVERY_MEDIA_FIELDS = `
+      id
+      title { english romaji native }
+      description
+      coverImage { extraLarge large medium }
+      bannerImage
+      startDate { year month day }
+      genres
+      averageScore
+      status
+      staff { edges { role node { name { full } } } }
+      studios { edges { isMain node { name } } }
+      episodes
+      duration
+      isAdult
+`;
+
+const DISCOVERY_GRAPHQL_QUERY = `
+  query DiscoverAnime($page: Int!, $perPage: Int!, $includeAdult: Boolean!, $sort: [MediaSort]!) {
+    Page(page: $page, perPage: $perPage) {
+      pageInfo { currentPage perPage hasNextPage }
+      media(type: ANIME, sort: $sort, isAdult: $includeAdult) {
+${DISCOVERY_MEDIA_FIELDS}
+      }
+    }
+  }
+`;
+
+const RECOMMENDATIONS_GRAPHQL_QUERY = `
+  query AnimeRecommendations($id: Int!, $page: Int!, $perPage: Int!) {
+    Media(id: $id, type: ANIME) {
+      recommendations(page: $page, perPage: $perPage) {
+        pageInfo { currentPage perPage hasNextPage }
+        nodes {
+          media {
+${DISCOVERY_MEDIA_FIELDS}
+          }
+        }
+      }
     }
   }
 `;
@@ -250,7 +294,7 @@ function normalizeAnime(itemValue) {
   }
 }
 
-function normalizePayload(payload) {
+function normalizePayload(payload, includeAdult = true) {
   const root = assertObject(payload);
   if (Object.prototype.hasOwnProperty.call(root, 'errors')) {
     if (!Array.isArray(root.errors)) throw invalidResponse();
@@ -264,7 +308,9 @@ function normalizePayload(payload) {
   if (typeof pageInfo.hasNextPage !== 'boolean' || !Array.isArray(page.media)) throw invalidResponse();
 
   return {
-    results: page.media.map(normalizeAnime),
+    results: page.media
+      .map(normalizeAnime)
+      .filter((media) => includeAdult || media.isAdult !== true),
     pagination: {
       page: pageInfo.currentPage,
       perPage: pageInfo.perPage,
@@ -282,6 +328,49 @@ function normalizeDetailsPayload(payload) {
   const data = assertObject(root.data);
   if (data.Media == null) throw new ProviderError(PROVIDER_ERROR_CODES.NOT_FOUND, PROVIDER_ERROR_MESSAGES[PROVIDER_ERROR_CODES.NOT_FOUND]);
   return normalizeAnime(data.Media);
+}
+
+function normalizeRecommendationsPayload(payload, includeAdult) {
+  const root = assertObject(payload);
+  if (Object.prototype.hasOwnProperty.call(root, 'errors')) {
+    if (!Array.isArray(root.errors)) throw invalidResponse();
+    throw new ProviderError(PROVIDER_ERROR_CODES.ERROR, 'AniList returned a provider error.');
+  }
+  const data = assertObject(root.data);
+  if (data.Media == null) throw new ProviderError(PROVIDER_ERROR_CODES.NOT_FOUND, PROVIDER_ERROR_MESSAGES[PROVIDER_ERROR_CODES.NOT_FOUND]);
+  const media = assertObject(data.Media);
+  const connection = assertObject(media.recommendations);
+  const pageInfo = assertObject(connection.pageInfo);
+  if (!Number.isInteger(pageInfo.currentPage) || pageInfo.currentPage < 1 ||
+      !Number.isInteger(pageInfo.perPage) || pageInfo.perPage < 1 || typeof pageInfo.hasNextPage !== 'boolean') {
+    throw invalidResponse();
+  }
+
+  let entries;
+  if (connection.nodes != null) {
+    if (!Array.isArray(connection.nodes)) throw invalidResponse();
+    entries = connection.nodes.map((entry) => assertObject(entry).media);
+  } else if (connection.edges != null) {
+    if (!Array.isArray(connection.edges)) throw invalidResponse();
+    entries = connection.edges.map((entry) => {
+      const edge = assertObject(entry);
+      return assertObject(edge.node).media;
+    });
+  } else {
+    throw invalidResponse();
+  }
+
+  return {
+    results: entries
+      .filter((entry) => entry != null)
+      .map(normalizeAnime)
+      .filter((mediaEntry) => includeAdult || mediaEntry.isAdult !== true),
+    pagination: {
+      page: pageInfo.currentPage,
+      perPage: pageInfo.perPage,
+      hasMore: pageInfo.hasNextPage
+    }
+  };
 }
 
 function errorForStatus(status, isSearchRequest = false) {
@@ -304,6 +393,13 @@ export function createAniListAdapter({
 } = {}) {
   if (typeof request !== 'function') throw new TypeError('An HTTP request function is required.');
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new RangeError('timeoutMs must be positive.');
+
+  const validateDiscoveryOptions = ({ page = 1, perPage = 12, includeAdult = true } = {}) => {
+    if (!Number.isInteger(page) || page < 1 || !Number.isInteger(perPage) || perPage < 1 || typeof includeAdult !== 'boolean') {
+      throw invalidResponse();
+    }
+    return { page, perPage, includeAdult };
+  };
 
   return {
     async searchMedia({ query, page = 1, perPage = 12, includeAdult = true } = {}) {
@@ -348,7 +444,7 @@ export function createAniListAdapter({
         } catch {
           throw invalidResponse();
         }
-        return normalizePayload(payload);
+        return normalizePayload(payload, includeAdult);
       } catch (error) {
         if (error instanceof ProviderError) throw error;
         if (timedOut || error?.name === 'AbortError') {
@@ -361,6 +457,73 @@ export function createAniListAdapter({
     },
     async searchAnime(options) {
       return this.searchMedia(options);
+    },
+    async getTrending({ page = 1, perPage = 12, includeAdult = true } = {}) {
+      const options = validateDiscoveryOptions({ page, perPage, includeAdult });
+      const payload = await requestProviderJson({
+        request,
+        url: endpoint,
+        timeoutMs,
+        options: {
+          method: 'POST',
+          headers: { accept: 'application/json', 'content-type': 'application/json' },
+          body: JSON.stringify({
+            query: DISCOVERY_GRAPHQL_QUERY,
+            variables: { ...options, sort: ['TRENDING_DESC'] }
+          })
+        },
+        invalidResponse,
+        errorForStatus: (status) => errorForStatus(status, true)
+      });
+      return normalizePayload(payload, includeAdult);
+    },
+    async getPopular({ page = 1, perPage = 12, includeAdult = true } = {}) {
+      const options = validateDiscoveryOptions({ page, perPage, includeAdult });
+      const payload = await requestProviderJson({
+        request,
+        url: endpoint,
+        timeoutMs,
+        options: {
+          method: 'POST',
+          headers: { accept: 'application/json', 'content-type': 'application/json' },
+          body: JSON.stringify({
+            query: DISCOVERY_GRAPHQL_QUERY,
+            variables: { ...options, sort: ['POPULARITY_DESC'] }
+          })
+        },
+        invalidResponse,
+        errorForStatus: (status) => errorForStatus(status, true)
+      });
+      return normalizePayload(payload, includeAdult);
+    },
+    async getRecommendations({ providerId, page = 1, perPage = 12, includeAdult = true } = {}) {
+      const options = validateDiscoveryOptions({ page, perPage, includeAdult });
+      if (typeof providerId !== 'string' || !/^[1-9]\d*$/.test(providerId.trim())) throw invalidResponse();
+      const payload = await requestProviderJson({
+        request,
+        url: endpoint,
+        timeoutMs,
+        options: {
+          method: 'POST',
+          headers: { accept: 'application/json', 'content-type': 'application/json' },
+          body: JSON.stringify({
+            query: RECOMMENDATIONS_GRAPHQL_QUERY,
+            variables: { id: Number(providerId), page, perPage }
+          })
+        },
+        invalidResponse,
+        errorForStatus: (status) => errorForStatus(status)
+      });
+      return normalizeRecommendationsPayload(payload, includeAdult);
+    },
+    getTrendingMedia(options) {
+      return this.getTrending(options);
+    },
+    getPopularMedia(options) {
+      return this.getPopular(options);
+    },
+    getMediaRecommendations(options) {
+      return this.getRecommendations(options);
     },
     async getMediaDetails({ providerId, includeAdult = true } = {}) {
       if (typeof providerId !== 'string' || !/^[1-9]\d*$/.test(providerId.trim())) {

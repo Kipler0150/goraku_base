@@ -24,6 +24,10 @@ import {
   createMediaDetailsService,
   MediaCapabilityError
 } from './media-details.js';
+import {
+  createMediaDiscoveryService,
+  MediaDiscoveryCapabilityError
+} from './media-discovery.js';
 import { createLibraryRouter } from './library-http.js';
 import { createTagsCollectionsRouter } from './tags-collections-http.js';
 
@@ -34,8 +38,10 @@ const NOT_FOUND_ERROR = {
 };
 
 const SEARCH_QUERY_FIELDS = new Set(['type', 'q', 'page', 'perPage', 'includeAdult', 'provider', 'cursor', 'retryProvider']);
+const MEDIA_DISCOVERY_QUERY_FIELDS = new Set(['type', 'page', 'perPage', 'includeAdult', 'provider']);
 const MEDIA_DETAIL_QUERY_FIELDS = new Set(['includeAdult']);
 const MEDIA_DETAIL_TYPES = new Set(['anime', 'movie', 'tv', 'game']);
+const DEFAULT_DISCOVERY_PROVIDERS = Object.freeze({ anime: 'anilist', movie: 'tmdb', tv: 'tmdb', game: 'thegamesdb' });
 
 function validationError(details) {
   return {
@@ -163,12 +169,15 @@ function validateMediaSearchQuery(query) {
   };
 }
 
-function validateMediaDetailsRequest(params, query) {
+function validateMediaDetailsRequest(params, query, { includePagination = false } = {}) {
   const details = [];
   const detailQuery = query && typeof query === 'object' ? query : {};
+  const allowedFields = includePagination
+    ? new Set(['includeAdult', 'page', 'perPage'])
+    : MEDIA_DETAIL_QUERY_FIELDS;
 
   for (const [field, value] of Object.entries(detailQuery)) {
-    if (!MEDIA_DETAIL_QUERY_FIELDS.has(field)) {
+    if (!allowedFields.has(field)) {
       details.push({ field, message: 'Unknown query parameter.' });
     }
     if (Array.isArray(value)) {
@@ -205,8 +214,93 @@ function validateMediaDetailsRequest(params, query) {
     }
   }
 
+  let page = 1;
+  let perPage = 12;
+  if (includePagination) {
+    const parsePositiveInteger = (field, defaultValue, maximum) => {
+      if (!Object.hasOwn(detailQuery, field)) return defaultValue;
+      if (Array.isArray(detailQuery[field])) return undefined;
+      if (typeof detailQuery[field] !== 'string' || !/^[1-9]\d*$/.test(detailQuery[field])) {
+        details.push({ field, message: `${field} must be a positive decimal integer from 1 to ${maximum}.` });
+        return undefined;
+      }
+      const value = Number(detailQuery[field]);
+      if (value > maximum) {
+        details.push({ field, message: `${field} must be a positive decimal integer from 1 to ${maximum}.` });
+        return undefined;
+      }
+      return value;
+    };
+    page = parsePositiveInteger('page', 1, 100);
+    perPage = parsePositiveInteger('perPage', 12, 24);
+  }
+
   if (details.length > 0) return validationError(details);
-  return { provider, type, providerId, includeAdult };
+  return includePagination
+    ? { provider, type, providerId, page, perPage, includeAdult }
+    : { provider, type, providerId, includeAdult };
+}
+
+function validateMediaDiscoveryQuery(query) {
+  const details = [];
+  const discoveryQuery = query && typeof query === 'object' ? query : {};
+
+  for (const [field, value] of Object.entries(discoveryQuery)) {
+    if (!MEDIA_DISCOVERY_QUERY_FIELDS.has(field)) {
+      details.push({ field, message: 'Unknown query parameter.' });
+    }
+    if (Array.isArray(value)) {
+      details.push({ field, message: 'Query parameters may only appear once.' });
+    }
+  }
+
+  const hasSingleValue = (field) => Object.hasOwn(discoveryQuery, field) && !Array.isArray(discoveryQuery[field]);
+  const type = discoveryQuery.type;
+  if (!hasSingleValue('type') || !MEDIA_DETAIL_TYPES.has(type)) {
+    details.push({ field: 'type', message: 'type must be exactly "anime", "movie", "tv", or "game".' });
+  }
+
+  const parsePositiveInteger = (field, defaultValue, maximum) => {
+    if (!Object.hasOwn(discoveryQuery, field)) return defaultValue;
+    if (Array.isArray(discoveryQuery[field])) return undefined;
+    if (typeof discoveryQuery[field] !== 'string' || !/^[1-9]\d*$/.test(discoveryQuery[field])) {
+      details.push({ field, message: `${field} must be a positive decimal integer from 1 to ${maximum}.` });
+      return undefined;
+    }
+    const value = Number(discoveryQuery[field]);
+    if (value > maximum) {
+      details.push({ field, message: `${field} must be a positive decimal integer from 1 to ${maximum}.` });
+      return undefined;
+    }
+    return value;
+  };
+
+  const page = parsePositiveInteger('page', 1, 100);
+  const perPage = parsePositiveInteger('perPage', 12, 24);
+
+  let includeAdult = true;
+  if (Object.hasOwn(discoveryQuery, 'includeAdult')) {
+    if (!hasSingleValue('includeAdult') || typeof discoveryQuery.includeAdult !== 'string' || !['true', 'false'].includes(discoveryQuery.includeAdult)) {
+      details.push({ field: 'includeAdult', message: 'includeAdult must be true or false.' });
+    } else {
+      includeAdult = discoveryQuery.includeAdult === 'true';
+    }
+  }
+
+  let provider;
+  if (Object.hasOwn(discoveryQuery, 'provider')) {
+    const providers = MEDIA_DETAIL_TYPES.has(type) ? getProvidersForType(type, 'search') : [];
+    if (!hasSingleValue('provider') || !providers.includes(discoveryQuery.provider)) {
+      details.push({ field: 'provider', message: `provider must be ${providers.join(' or ')}.` });
+    } else {
+      provider = discoveryQuery.provider;
+    }
+  } else if (MEDIA_DETAIL_TYPES.has(type)) {
+    provider = DEFAULT_DISCOVERY_PROVIDERS[type];
+  }
+
+  if (details.length > 0) return validationError(details);
+  return { type, provider, page, perPage, includeAdult };
 }
 
 function sendErrorResponse(response, status, error) {
@@ -219,6 +313,21 @@ function providerFailureResponse(response, error, provider) {
 
 function combinedFailureResponse(response, type) {
   sendErrorResponse(response, 503, providersUnavailable(type));
+}
+
+function discoveryFailureResponse(response, error, provider) {
+  if (error instanceof MediaDiscoveryCapabilityError || error?.code === CAPABILITY_UNSUPPORTED_CODE) {
+    sendErrorResponse(response, 501, {
+      code: CAPABILITY_UNSUPPORTED_CODE,
+      message: 'This Provider does not support the requested operation.'
+    });
+    return;
+  }
+  if (error?.code === 'PROVIDER_NOT_FOUND') {
+    sendErrorResponse(response, 404, NOT_FOUND_ERROR);
+    return;
+  }
+  providerFailureResponse(response, error, provider);
 }
 
 export function createApp({
@@ -234,11 +343,19 @@ export function createApp({
   tmdbAdapter = createTMDBAdapter(),
   thegamesdbAdapter = createTheGamesDBAdapter(),
   rawgAdapter = createRAWGAdapter(),
-  mediaDetailsService = null
+  mediaDetailsService = null,
+  mediaDiscoveryService = null
 } = {}) {
   const app = express();
   const mediaSearch = createMediaSearchService({ anilistAdapter, myanimelistAdapter, tmdbAdapter, thegamesdbAdapter, rawgAdapter });
   const mediaDetails = mediaDetailsService ?? createMediaDetailsService({
+    anilistAdapter,
+    myanimelistAdapter,
+    tmdbAdapter,
+    thegamesdbAdapter,
+    rawgAdapter
+  });
+  const mediaDiscovery = mediaDiscoveryService ?? createMediaDiscoveryService({
     anilistAdapter,
     myanimelistAdapter,
     tmdbAdapter,
@@ -283,6 +400,39 @@ export function createApp({
       }
       const defaultProvider = validated.type === 'anime' ? 'anilist' : validated.type === 'game' ? 'thegamesdb' : 'tmdb';
       providerFailureResponse(response, error, error?.provider ?? validated.provider ?? defaultProvider);
+    }
+  });
+
+  const handleDiscoveryRequest = async (operation, request, response) => {
+    const validated = validateMediaDiscoveryQuery(request.query);
+    if (validated.status) {
+      response.status(validated.status).json(validated.body);
+      return;
+    }
+
+    try {
+      const result = await mediaDiscovery[operation](validated);
+      response.status(200).json(result);
+    } catch (error) {
+      discoveryFailureResponse(response, error, validated.provider);
+    }
+  };
+
+  app.get('/api/media/trending', (request, response) => handleDiscoveryRequest('getTrending', request, response));
+  app.get('/api/media/popular', (request, response) => handleDiscoveryRequest('getPopular', request, response));
+
+  app.get('/api/media/:provider/:type/:id/recommendations', async (request, response) => {
+    const validated = validateMediaDetailsRequest(request.params, request.query, { includePagination: true });
+    if (validated.status) {
+      response.status(validated.status).json(validated.body);
+      return;
+    }
+
+    try {
+      const result = await mediaDiscovery.getRecommendations(validated);
+      response.status(200).json(result);
+    } catch (error) {
+      discoveryFailureResponse(response, error, validated.provider);
     }
   });
 

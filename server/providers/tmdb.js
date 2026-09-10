@@ -1,5 +1,6 @@
 import { createMedia } from '../../shared/media.js';
 import { ProviderError, PROVIDER_ERROR_CODES } from './errors.js';
+import { requestProviderJson } from './http.js';
 
 export const TMDB_ENDPOINT = 'https://api.themoviedb.org/3/search';
 export const TMDB_DETAILS_ENDPOINT = 'https://api.themoviedb.org/3';
@@ -290,6 +291,14 @@ export function createTMDBAdapter({
     ? detailsEndpoint.trim()
     : TMDB_DETAILS_ENDPOINT).replace(/\/+$/, '');
 
+  const validateDiscoveryOptions = ({ type, page = 1, perPage = 12, includeAdult = true } = {}) => {
+    if (!SEARCH_TYPES.has(type) || !Number.isInteger(page) || page < 1 ||
+        !Number.isInteger(perPage) || perPage < 1 || typeof includeAdult !== 'boolean') {
+      throw invalidResponse();
+    }
+    return { type, page, perPage, includeAdult };
+  };
+
   return {
     enabled: Boolean(normalizedToken),
     async searchMedia(options = {}) {
@@ -347,6 +356,76 @@ export function createTMDBAdapter({
       } finally {
         clearTimeout(timeoutHandle);
       }
+    },
+    async getTrending({ type = 'movie', page = 1, perPage = 12, includeAdult = true } = {}) {
+      const options = validateDiscoveryOptions({ type, page, perPage, includeAdult });
+      if (!normalizedToken) throw providerError(PROVIDER_ERROR_CODES.UNAVAILABLE);
+      const url = new URL(`${normalizedDetailsEndpoint}/trending/${type}/week`);
+      url.searchParams.set('page', String(page));
+      url.searchParams.set('include_adult', String(includeAdult));
+      url.searchParams.set('language', 'en-US');
+      const payload = await requestProviderJson({
+        request,
+        url,
+        timeoutMs,
+        options: {
+          method: 'GET',
+          headers: { accept: 'application/json', Authorization: `Bearer ${normalizedToken}` }
+        },
+        invalidResponse,
+        errorForStatus: (status) => errorForStatus(status, true)
+      });
+      return normalizePayload(payload, options.type, normalizedImageBaseUrl, includeAdult);
+    },
+    async getPopular({ type = 'movie', page = 1, perPage = 12, includeAdult = true } = {}) {
+      const options = validateDiscoveryOptions({ type, page, perPage, includeAdult });
+      if (!normalizedToken) throw providerError(PROVIDER_ERROR_CODES.UNAVAILABLE);
+      const url = new URL(`${normalizedDetailsEndpoint}/${type}/popular`);
+      url.searchParams.set('page', String(page));
+      url.searchParams.set('include_adult', String(includeAdult));
+      url.searchParams.set('language', 'en-US');
+      const payload = await requestProviderJson({
+        request,
+        url,
+        timeoutMs,
+        options: {
+          method: 'GET',
+          headers: { accept: 'application/json', Authorization: `Bearer ${normalizedToken}` }
+        },
+        invalidResponse,
+        errorForStatus: (status) => errorForStatus(status, true)
+      });
+      return normalizePayload(payload, options.type, normalizedImageBaseUrl, includeAdult);
+    },
+    async getRecommendations({ type = 'movie', providerId, page = 1, perPage = 12, includeAdult = true } = {}) {
+      const options = validateDiscoveryOptions({ type, page, perPage, includeAdult });
+      if (typeof providerId !== 'string' || !/^[1-9]\d*$/.test(providerId.trim())) throw invalidResponse();
+      if (!normalizedToken) throw providerError(PROVIDER_ERROR_CODES.UNAVAILABLE);
+      const url = new URL(`${normalizedDetailsEndpoint}/${type}/${providerId.trim()}/recommendations`);
+      url.searchParams.set('page', String(page));
+      url.searchParams.set('include_adult', String(includeAdult));
+      url.searchParams.set('language', 'en-US');
+      const payload = await requestProviderJson({
+        request,
+        url,
+        timeoutMs,
+        options: {
+          method: 'GET',
+          headers: { accept: 'application/json', Authorization: `Bearer ${normalizedToken}` }
+        },
+        invalidResponse,
+        errorForStatus: (status) => errorForStatus(status)
+      });
+      return normalizePayload(payload, options.type, normalizedImageBaseUrl, includeAdult);
+    },
+    getTrendingMedia(options) {
+      return this.getTrending(options);
+    },
+    getPopularMedia(options) {
+      return this.getPopular(options);
+    },
+    getMediaRecommendations(options) {
+      return this.getRecommendations(options);
     },
     async getMediaDetails({ type = 'movie', providerId, includeAdult = true } = {}) {
       if (!SEARCH_TYPES.has(type) || typeof providerId !== 'string' || !/^[1-9]\d*$/.test(providerId.trim())) {

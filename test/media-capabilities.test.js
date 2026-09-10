@@ -19,14 +19,14 @@ describe('provider capability matrix', () => {
     ]);
 
     const expected = {
-      anilist: { anime: { search: true, details: true, trending: false, popular: false, recommendations: false } },
-      myanimelist: { anime: { search: true, details: true, trending: false, popular: false, recommendations: false } },
+      anilist: { anime: { search: true, details: true, trending: true, popular: true, recommendations: true } },
+      myanimelist: { anime: { search: true, details: true, trending: false, popular: true, recommendations: true } },
       tmdb: {
-        movie: { search: true, details: true, trending: false, popular: false, recommendations: false },
-        tv: { search: true, details: true, trending: false, popular: false, recommendations: false }
+        movie: { search: true, details: true, trending: true, popular: true, recommendations: true },
+        tv: { search: true, details: true, trending: true, popular: true, recommendations: true }
       },
       thegamesdb: { game: { search: true, details: true, trending: false, popular: false, recommendations: false } },
-      rawg: { game: { search: true, details: true, trending: false, popular: false, recommendations: false } }
+      rawg: { game: { search: true, details: true, trending: false, popular: true, recommendations: true } }
     };
 
     assert.deepEqual(PROVIDER_CAPABILITY_MATRIX, expected);
@@ -36,12 +36,12 @@ describe('provider capability matrix', () => {
     assert.deepEqual(getProviderCapabilities('tmdb', 'movie'), {
       search: true,
       details: true,
-      trending: false,
-      popular: false,
-      recommendations: false
+      trending: true,
+      popular: true,
+      recommendations: true
     });
     assert.equal(supportsProviderCapability('tmdb', 'movie', 'details'), true);
-    assert.equal(supportsProviderCapability('tmdb', 'movie', 'trending'), false);
+    assert.equal(supportsProviderCapability('tmdb', 'movie', 'trending'), true);
     assert.equal(supportsProviderCapability('anilist', 'movie', 'details'), false);
     assert.equal(supportsProviderCapability('unknown', 'anime', 'details'), false);
     assert.equal(supportsProviderCapability('tmdb', 'movie', 'unknown'), false);

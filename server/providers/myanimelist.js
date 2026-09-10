@@ -1,5 +1,6 @@
 import { createMedia } from '../../shared/media.js';
 import { ProviderError, PROVIDER_ERROR_CODES } from './errors.js';
+import { requestProviderJson } from './http.js';
 
 export const MYANIMELIST_ENDPOINT = 'https://api.myanimelist.net/v2/anime';
 export const MYANIMELIST_TIMEOUT_MS = 5_000;
@@ -176,6 +177,14 @@ export function createMyAnimeListAdapter({
   if (typeof request !== 'function') throw new TypeError('An HTTP request function is required.');
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new RangeError('timeoutMs must be positive.');
   const normalizedClientId = typeof clientId === 'string' ? clientId.trim() : '';
+  const normalizedEndpoint = endpoint.replace(/\/+$/, '');
+
+  const validateDiscoveryOptions = ({ page = 1, perPage = 12, includeAdult = true } = {}) => {
+    if (!Number.isInteger(page) || page < 1 || !Number.isInteger(perPage) || perPage < 1 || typeof includeAdult !== 'boolean') {
+      throw invalidResponse();
+    }
+    return { page, perPage, includeAdult };
+  };
 
   return {
     enabled: Boolean(normalizedClientId),
@@ -233,6 +242,54 @@ export function createMyAnimeListAdapter({
     },
     async searchAnime(options) {
       return this.searchMedia(options);
+    },
+    async getPopular({ page = 1, perPage = 12, includeAdult = true } = {}) {
+      if (!normalizedClientId) throw providerError(PROVIDER_ERROR_CODES.UNAVAILABLE);
+      const options = validateDiscoveryOptions({ page, perPage, includeAdult });
+      const url = new URL(`${normalizedEndpoint}/ranking`);
+      url.searchParams.set('ranking_type', 'bypopularity');
+      url.searchParams.set('limit', String(perPage));
+      url.searchParams.set('offset', String((page - 1) * perPage));
+      url.searchParams.set('fields', FIELDS);
+      const payload = await requestProviderJson({
+        request,
+        url,
+        timeoutMs,
+        options: {
+          method: 'GET',
+          headers: { accept: 'application/json', 'X-MAL-CLIENT-ID': normalizedClientId }
+        },
+        invalidResponse,
+        errorForStatus: (status) => errorForStatus(status, true)
+      });
+      return normalizePayload(payload, page, perPage, includeAdult);
+    },
+    async getRecommendations({ providerId, page = 1, perPage = 12, includeAdult = true } = {}) {
+      if (!normalizedClientId) throw providerError(PROVIDER_ERROR_CODES.UNAVAILABLE);
+      const options = validateDiscoveryOptions({ page, perPage, includeAdult });
+      if (typeof providerId !== 'string' || !/^[1-9]\d*$/.test(providerId.trim())) throw invalidResponse();
+      const url = new URL(`${normalizedEndpoint}/${providerId.trim()}/recommendations`);
+      url.searchParams.set('limit', String(perPage));
+      url.searchParams.set('offset', String((page - 1) * perPage));
+      url.searchParams.set('fields', FIELDS);
+      const payload = await requestProviderJson({
+        request,
+        url,
+        timeoutMs,
+        options: {
+          method: 'GET',
+          headers: { accept: 'application/json', 'X-MAL-CLIENT-ID': normalizedClientId }
+        },
+        invalidResponse,
+        errorForStatus: (status) => errorForStatus(status)
+      });
+      return normalizePayload(payload, page, perPage, options.includeAdult);
+    },
+    getPopularMedia(options) {
+      return this.getPopular(options);
+    },
+    getMediaRecommendations(options) {
+      return this.getRecommendations(options);
     },
     async getMediaDetails({ providerId, includeAdult = true } = {}) {
       if (typeof providerId !== 'string' || !/^[1-9]\d*$/.test(providerId.trim())) {
