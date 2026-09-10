@@ -6,6 +6,13 @@ export const LIBRARY_STATUS_VALUES = Object.freeze([
   'DROPPED'
 ]);
 
+export const PERSONAL_RATING_MIN = 0;
+export const PERSONAL_RATING_MAX = 10;
+export const PERSONAL_RATING_STEP = 0.5;
+export const MAX_NOTE_LENGTH = 5_000;
+export const MAX_USER_OWNED_NAME_LENGTH = 50;
+export const SUPPORTED_PROGRESS_TYPES = Object.freeze(['ANIME', 'MOVIE', 'TV', 'GAME']);
+
 export class LibraryValidationError extends Error {
   constructor(message, details = []) {
     super(message);
@@ -21,6 +28,149 @@ export class LibraryConflictError extends Error {
     this.name = 'LibraryConflictError';
     this.code = 'CONFLICT';
   }
+}
+
+function trackingValidationError(field, message) {
+  return new LibraryValidationError(message, [{ field, message }]);
+}
+
+/**
+ * Normalize a private Tag or Collection name for storage. The database owns
+ * the final uniqueness check, while this function gives both resources the
+ * same trimmed display and case-insensitive key policy.
+ *
+ * @param {unknown} value
+ * @returns {{ name: string, normalizedName: string }}
+ */
+export function normalizeUserOwnedName(value) {
+  if (typeof value !== 'string') {
+    throw trackingValidationError('name', 'name must be text from 1 to 50 Unicode characters.');
+  }
+
+  const name = value.trim();
+  if ([...name].length < 1 || [...name].length > MAX_USER_OWNED_NAME_LENGTH) {
+    throw trackingValidationError('name', `name must be from 1 to ${MAX_USER_OWNED_NAME_LENGTH} Unicode characters.`);
+  }
+
+  return { name, normalizedName: name.toLowerCase() };
+}
+
+/**
+ * Validate and preserve a User's Personal Rating. A null value clears it and
+ * zero remains a valid rating.
+ *
+ * @param {unknown} value
+ * @returns {number|null}
+ */
+export function normalizePersonalRating(value) {
+  if (value === null) return null;
+  if (
+    typeof value !== 'number'
+    || !Number.isFinite(value)
+    || value < PERSONAL_RATING_MIN
+    || value > PERSONAL_RATING_MAX
+    || !Number.isInteger(value / PERSONAL_RATING_STEP)
+  ) {
+    throw trackingValidationError(
+      'personalRating',
+      `personalRating must be null or a number from ${PERSONAL_RATING_MIN} to ${PERSONAL_RATING_MAX} in ${PERSONAL_RATING_STEP} increments.`
+    );
+  }
+  return value;
+}
+
+/**
+ * Validate a User-owned Note. Empty and null values both clear the Note.
+ * Length is measured in Unicode code points rather than UTF-16 code units.
+ *
+ * @param {unknown} value
+ * @returns {string|null}
+ */
+export function normalizeNote(value) {
+  if (value === null) return null;
+  if (typeof value !== 'string') {
+    throw trackingValidationError('note', 'note must be null or plain text.');
+  }
+  if (value.length === 0) return null;
+  if ([...value].length > MAX_NOTE_LENGTH) {
+    throw trackingValidationError('note', `note must be at most ${MAX_NOTE_LENGTH} Unicode characters.`);
+  }
+  return value;
+}
+
+function isPlainObject(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function hasExactlyKeys(value, expectedKeys) {
+  const keys = Object.keys(value);
+  return keys.length === expectedKeys.length && expectedKeys.every((key) => Object.hasOwn(value, key));
+}
+
+function hasAtMostTwoDecimalPlaces(value) {
+  const [coefficient, exponentText] = String(value).toLowerCase().split('e');
+  const fractionalDigits = coefficient.includes('.') ? coefficient.split('.')[1].length : 0;
+  const exponent = exponentText === undefined ? 0 : Number(exponentText);
+  return Number.isInteger(exponent) && Math.max(0, fractionalDigits - exponent) <= 2;
+}
+
+/**
+ * Validate Progress against the Library Item's immutable Media type.
+ * Null clears Progress. The returned object contains only the accepted typed
+ * fields, so callers can pass it directly to the persistence boundary.
+ *
+ * @param {unknown} type normalized Media type
+ * @param {unknown} value
+ * @returns {Record<string, number|boolean>|null}
+ */
+export function validateProgress(type, value) {
+  if (value === null) return null;
+  if (!SUPPORTED_PROGRESS_TYPES.includes(type)) {
+    throw trackingValidationError('progress', 'progress is not supported for this Media type.');
+  }
+  if (!isPlainObject(value)) {
+    throw trackingValidationError('progress', 'progress must be null or a typed JSON object.');
+  }
+
+  if (type === 'ANIME') {
+    if (!hasExactlyKeys(value, ['episodesWatched']) || !Number.isInteger(value.episodesWatched) || value.episodesWatched < 0) {
+      throw trackingValidationError('progress', 'ANIME progress must contain only a non-negative integer episodesWatched value.');
+    }
+    return { episodesWatched: value.episodesWatched };
+  }
+
+  if (type === 'TV') {
+    if (
+      !hasExactlyKeys(value, ['season', 'episode'])
+      || !Number.isInteger(value.season)
+      || value.season < 0
+      || !Number.isInteger(value.episode)
+      || value.episode < 1
+    ) {
+      throw trackingValidationError('progress', 'TV progress must contain a non-negative integer season and positive integer episode.');
+    }
+    return { season: value.season, episode: value.episode };
+  }
+
+  if (type === 'MOVIE') {
+    if (!hasExactlyKeys(value, ['watched']) || typeof value.watched !== 'boolean') {
+      throw trackingValidationError('progress', 'MOVIE progress must contain only a boolean watched value.');
+    }
+    return { watched: value.watched };
+  }
+
+  if (
+    !hasExactlyKeys(value, ['hoursPlayed'])
+    || typeof value.hoursPlayed !== 'number'
+    || !Number.isFinite(value.hoursPlayed)
+    || value.hoursPlayed < 0
+    || !hasAtMostTwoDecimalPlaces(value.hoursPlayed)
+  ) {
+    throw trackingValidationError('progress', 'GAME progress must contain only a non-negative hoursPlayed value with at most two decimal places.');
+  }
+  return { hoursPlayed: value.hoursPlayed };
 }
 
 function isUniqueViolation(error) {
