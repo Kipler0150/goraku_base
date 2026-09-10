@@ -12,15 +12,15 @@ delegated: React, JavaScript, CSS, Node.js, and Express, with npm for reproducib
 
 ## Users
 
-Inferred from the Phase 1 brief: learners and portfolio reviewers who need to start the project locally and understand whether the browser can reach its backend.
+Learners and portfolio reviewers who need a reproducible REST application, plus individuals who want to discover entertainment and maintain a private personal library.
 
 ## Product Purpose
 
-Goraku Base is an entertainment discovery and personal tracking application in progress. Phase 1 succeeds when a developer can run the React client and Express API, see a minimal welcome page, and verify the request path through an explicit health check.
+Goraku Base is an entertainment discovery and personal tracking application. Its current local/staging surface lets a User search supported media, authenticate locally, own reference-only Library Items, and edit Personal Ratings, Notes, Tags, Collections, and media-specific Progress in the authenticated Library.
 
 ## Positioning
 
-The project is a learning-oriented REST portfolio foundation: its first visible feature makes the boundary between a browser client and backend observable before provider integrations, authentication, or persistence exist.
+The project is a learning-oriented REST portfolio application: its observable browser-to-backend request path now supports provider-backed discovery and a private local/staging Library with an explicit, verifiable tracking surface.
 
 ## Operating Context
 
@@ -28,10 +28,10 @@ Local development uses native npm commands or Docker Compose. The health endpoin
 
 ## Capabilities and Constraints
 
-- Phase 1 exposes `GET /api/health` and a React welcome page with loading, connected, unavailable, and retry states.
+- The React client exposes the health proof, public media search, local authentication, and an ownership-scoped reference Library.
 - The browser uses a relative API URL; Express owns the API boundary and safe error envelopes.
-- Media metadata, provider adapters, authentication, database storage, and library routes remain planned work.
-- The shared Media contract is a separate Phase 1 foundation and must not be confused with personal library data.
+- Provider-owned Media, User-owned Library Items, and User-owned tracking data remain separate concepts.
+- Phase 6 tracking slices are implemented for local/staging use; the walkthrough, boundary verification, provider hydration, production hardening, and public deployment remain outside the verified surface.
 
 ## Brand Commitments
 

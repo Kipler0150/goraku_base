@@ -1,6 +1,6 @@
 # Goraku Base architecture and phased plan
 
-Status: Phases 1-5 are complete for their documented local/staging boundaries. The executable scope and acceptance criteria are recorded in the [Phase 1 specification](../.scratch/phase-1-foundation/spec.md), [Phase 2 anime search specification](../.scratch/phase-2-anilist-search/spec.md), [Phase 2 anime search walkthrough](phase-2-walkthrough.md), [Phase 3 TMDB search specification](../.scratch/phase-3-tmdb-search/spec.md), [Phase 4 specification](../.scratch/phase-4-rawg-combined-search/spec.md), and [Phase 5 walkthrough](phase-5-walkthrough.md).
+Status: Phases 1-5 are complete for their documented local/staging boundaries. Phase 6 tracking implementation slices 1-5 are complete for their documented local/staging boundaries; its walkthrough and boundary verification remain. The executable scope and acceptance criteria are recorded in the [Phase 1 specification](../.scratch/phase-1-foundation/spec.md), [Phase 2 anime search specification](../.scratch/phase-2-anilist-search/spec.md), [Phase 2 anime search walkthrough](phase-2-walkthrough.md), [Phase 3 TMDB search specification](../.scratch/phase-3-tmdb-search/spec.md), [Phase 4 specification](../.scratch/phase-4-rawg-combined-search/spec.md), [Phase 5 walkthrough](phase-5-walkthrough.md), and [Phase 6 personal tracking specification](../.scratch/phase-6-tracking-enrichment/spec.md).
 
 ## Purpose and scope
 
@@ -30,8 +30,20 @@ External providers own media metadata. PostgreSQL owns user library data. Cache 
 | POST /api/library | Add a media reference to that user's library |
 | PATCH /api/library/:id | Update allowed user-owned fields |
 | DELETE /api/library/:id | Remove that user's library item |
+| GET /api/tags | List that user's Tags |
+| POST /api/tags | Create a Tag |
+| PATCH /api/tags/:id | Rename a Tag |
+| DELETE /api/tags/:id | Delete a Tag and its memberships |
+| GET /api/collections | List that user's Collections |
+| POST /api/collections | Create a Collection |
+| PATCH /api/collections/:id | Rename a Collection |
+| DELETE /api/collections/:id | Delete a Collection and its memberships |
+| PUT /api/library/:id/tags/:tagId | Attach a Tag to a Library Item |
+| DELETE /api/library/:id/tags/:tagId | Detach a Tag from a Library Item |
+| PUT /api/library/:id/collections/:collectionId | Attach a Collection to a Library Item |
+| DELETE /api/library/:id/collections/:collectionId | Detach a Collection from a Library Item |
 
-The detail route adds type to the original example to distinguish movie and TV identifiers within TMDB. A library route ID identifies the local library record, not the provider media ID. Public query and route values use lowercase; normalized Media.type uses ANIME, MANGA, MOVIE, TV, GAME, or COMIC. Reserve future types in the model, but enable search filters only when a provider supports them.
+The detail route adds type to the original example to distinguish movie and TV identifiers within TMDB. A library route ID identifies the local library record, not the provider media ID. Public query and route values use lowercase; normalized Media.type and JSON enum values such as Library Status use uppercase. The `libraryStatus` Library filter follows the lowercase public-query rule (for example, `in_progress`); the server also accepts the uppercase enum form for compatibility and normalizes it before querying. Reserve future types in the model, but enable search filters only when a provider supports them.
 
 Use 200 for successful reads and updates, 201 plus a Location header for creation, and 204 with no body for deletion. Use 400 for invalid requests, 401 for absent or invalid authentication, 404 for absent resources (including another user's library records), 409 for duplicate entries, and 429 for application rate limits. Use 403 where an authenticated caller lacks permission and resource existence is not private. Return 503 when all requested providers are unavailable. Do not invent results to hide failures.
 

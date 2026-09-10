@@ -17,4 +17,4 @@ Connectivity feedback is an `aria-live` status with explicit loading, connected,
 
 ## Content boundary
 
-The page claims only the Phase 1 foundation. Provider metadata, authentication, database storage, media cards, and library behavior are described as future work rather than simulated.
+The page claims only verified local/staging behavior. Provider metadata remains external, and the completed Phase 6 tracking slices are presented only through the authenticated Library; provider hydration, production hardening, and public deployment remain future work.

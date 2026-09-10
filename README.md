@@ -1,10 +1,10 @@
 # Goraku Base
 
-An entertainment bookmarking and tracking application for anime, movies, television, and video games. Phase 1 is now a runnable React + Express foundation.
+An entertainment bookmarking and tracking application for anime, movies, television, and video games. Phases 1–6 tracking slices now provide a runnable React, Express, and PostgreSQL local/staging foundation.
 
 ## Project status
 
-Phase 1: complete runnable foundation. Phase 2: complete anime search through Express with unofficial AniList integration and an optional unofficial MyAnimeList availability fallback, plus normalized MediaCards, pagination, loading/error states, and a temporary local adult-content filter. Phase 3: complete movie and TV title search through the server-side TMDB adapter with the same generic search surface, server-only configuration, attribution, and credential-free repository verification. Phase 4: complete TheGamesDB-primary game search with RAWG availability fallback and Combined Search with independent Provider Failures, cursor pagination, server-only configuration, attribution, and deterministic verification. Phase 5: complete local/staging PostgreSQL persistence, local email/password authentication, seven-day server-managed Sessions, secure cookies, mutation Origin validation, authenticated User context, and ownership-scoped Library Item CRUD for Library Status and favorite. Google authentication, account recovery, production rate limiting, and public deployment remain future work.
+Phase 1: complete runnable foundation. Phase 2: complete anime search through Express with unofficial AniList integration and an optional unofficial MyAnimeList availability fallback, plus normalized MediaCards, pagination, loading/error states, and a temporary local adult-content filter. Phase 3: complete movie and TV title search through the server-side TMDB adapter with the same generic search surface, server-only configuration, attribution, and credential-free repository verification. Phase 4: complete TheGamesDB-primary game search with RAWG availability fallback and Combined Search with independent Provider Failures, cursor pagination, server-only configuration, attribution, and deterministic verification. Phase 5: complete local/staging PostgreSQL persistence, local email/password authentication, seven-day server-managed Sessions, secure cookies, mutation Origin validation, authenticated User context, and ownership-scoped Library Item CRUD for Library Status and favorite. Phase 6 tracking slices 1-5 are complete for local/staging use, including User-owned Personal Ratings, Notes, Tags, Collections, media-specific Progress, focused filters, and the authenticated Library editor. The Phase 6 walkthrough and boundary verification remain; Google authentication, account recovery, production rate limiting, and public deployment remain future work.
 
 ## Portfolio focus
 
@@ -59,7 +59,7 @@ Compose also starts a persistent PostgreSQL 16 service as `postgres`. Its defaul
 
 PostgreSQL integration tests require the separate `goraku_test` database. Create it with `docker compose exec postgres createdb -U goraku goraku_test`, set `TEST_DATABASE_URL` to its URL, and run `npm run test:integration`. Each suite migrates a unique temporary schema inside that database and drops the schema during teardown; the test refuses other database names and never touches the normal `goraku` database. See the [Phase 5 walkthrough](docs/phase-5-walkthrough.md) for native, Docker, PowerShell, and troubleshooting commands.
 
-Local authentication and the first library slice are available when the server has a migrated `DATABASE_URL`. Use `POST /api/auth/register` or `POST /api/auth/login` with `{ "email": "...", "password": "..." }`; the server sets an HTTP-only `goraku_session` cookie. `GET /api/auth/me` reads the current User from that Session, and `POST /api/auth/logout` revokes only the current Session. Authenticated clients can use `GET|POST /api/library`, `PATCH /api/library/:id`, and `DELETE /api/library/:id` for reference-only Library Items with Library Status and favorite. Mutation requests must send the exact configured `APP_ORIGIN` (default `http://localhost:5173`).
+Local authentication and the first library slice are available when the server has a migrated `DATABASE_URL`. Use `POST /api/auth/register` or `POST /api/auth/login` with `{ "email": "...", "password": "..." }`; the server sets an HTTP-only `goraku_session` cookie. `GET /api/auth/me` reads the current User from that Session, and `POST /api/auth/logout` revokes only the current Session. Authenticated clients can use `GET|POST /api/library`, `PATCH /api/library/:id`, and `DELETE /api/library/:id` for reference-only Library Items and Phase 6 tracking fields, plus the Tag, Collection, and membership routes documented in the architecture plan. Mutation requests must send the exact configured `APP_ORIGIN` (default `http://localhost:5173`).
 
 For a background verification run, use `docker compose up --build -d`, confirm both services with `docker compose ps`, check `curl.exe http://localhost:3001/api/health` and `curl.exe http://localhost:5173/api/health`, then stop everything with `docker compose down`. Compose is a local development path, not a production deployment recipe.
 
@@ -73,7 +73,7 @@ The contract deliberately excludes user-owned Library Item fields such as person
 
 ## Planned features
 
-Media details, a personal library, favorites, ratings, notes, tags, collections, and progress appropriate to each media type. Additional media types and providers can be added later.
+Media details, recommendations, additional media types/providers, the Phase 6 walkthrough and boundary artifact, production hardening, and deployment remain future work.
 
 ## Documentation
 

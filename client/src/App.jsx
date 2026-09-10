@@ -1,8 +1,10 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useHealthCheck } from './hooks/useHealthCheck.js';
 import { useAuth } from './hooks/useAuth.js';
 import { useLibrary } from './hooks/useLibrary.js';
 import { useMediaSearch } from './hooks/useMediaSearch.js';
+import { useTaxonomy } from './hooks/useTaxonomy.js';
+import { LIBRARY_STATUS_VALUES } from './api/library.js';
 import { mediaIdentity } from './mediaIdentity.js';
 import './styles.css';
 
@@ -152,13 +154,13 @@ function getCardFacts(media) {
   ];
 }
 
-function MediaCard({ media, user, libraryItem, libraryAction, onSave, onRequestSignIn }) {
+function MediaCard({ media, user, library, onSave, onRequestSignIn }) {
   const [imageFailed, setImageFailed] = useState(false);
   const title = media.title || 'Title unavailable';
   const hasImage = Boolean(media.image) && !imageFailed;
   const identity = mediaIdentity(media);
-  const isSaving = libraryAction?.type === 'save' && libraryAction.key === identity;
-  const isSaved = Boolean(libraryItem);
+  const isSaving = library.isSaveBusy(identity);
+  const isSaved = library.isSaved(media);
 
   return (
     <article className="media-card">
@@ -342,8 +344,7 @@ function MediaGrid({ results, label, user, library, onSave, onRequestSignIn }) {
           <MediaCard
             media={media}
             user={user}
-            libraryItem={library.results.find((item) => mediaIdentity(item) === mediaIdentity(media))}
-            libraryAction={library.action}
+            library={library}
             onSave={onSave}
             onRequestSignIn={onRequestSignIn}
           />
@@ -368,7 +369,7 @@ function CombinedResults({ results, user, library, onSave, onRequestSignIn }) {
               results={group.results}
               label={group.label}
               user={user}
-              library={library}
+            library={library}
               onSave={onSave}
               onRequestSignIn={onRequestSignIn}
             />
@@ -638,15 +639,319 @@ function libraryItemLabel(item) {
 }
 
 function formatLibraryStatus(status) {
-  return status.replaceAll('_', ' ');
+  return status.toLowerCase().replaceAll('_', ' ').replace(/(^|\s)\S/g, (character) => character.toUpperCase());
 }
 
-function LibraryItem({ item, library }) {
-  const label = libraryItemLabel(item);
-  const isUpdating = library.action?.id === item.id;
+function StarIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path d="m12 2.75 2.86 5.79 6.39.93-4.63 4.51 1.09 6.37L12 17.34l-5.71 3.01 1.09-6.37-4.63-4.51 6.39-.93L12 2.75Z" />
+    </svg>
+  );
+}
+
+function PersonalRating({ item, library, label }) {
+  const rating = item.personalRating;
+  const busy = library.isActionBusy(item.id, 'personalRating');
+  const valueLabel = rating === null ? 'Unrated on a 0–10 scale.' : `${rating} out of 10.`;
 
   return (
-    <li className="library-item">
+    <fieldset className="tracking-editor rating-editor" disabled={busy}>
+      <legend>Personal rating for {label}</legend>
+      <div className="rating-row">
+        <button
+          type="button"
+          className="text-action rating-zero"
+          aria-pressed={rating === 0}
+          onClick={() => library.update(item.id, { personalRating: 0 }, { actionKey: 'personalRating' })}
+        >
+          Rate 0 out of 10
+        </button>
+        <div className="rating-stars" role="group" aria-label={`Personal rating, ${valueLabel}`}>
+          {Array.from({ length: 5 }, (_, index) => {
+            const leftValue = index * 2 + 1;
+            const rightValue = leftValue + 1;
+            return (
+              <span className="rating-star" key={leftValue}>
+                <button
+                  type="button"
+                  className={`rating-half rating-half--left${rating !== null && rating >= leftValue ? ' is-selected' : ''}`}
+                  aria-label={`Rate ${leftValue} out of 10`}
+                  aria-pressed={rating === leftValue}
+                  onClick={() => library.update(item.id, { personalRating: leftValue }, { actionKey: 'personalRating' })}
+                >
+                  <StarIcon />
+                </button>
+                <button
+                  type="button"
+                  className={`rating-half rating-half--right${rating !== null && rating >= rightValue ? ' is-selected' : ''}`}
+                  aria-label={`Rate ${rightValue} out of 10`}
+                  aria-pressed={rating === rightValue}
+                  onClick={() => library.update(item.id, { personalRating: rightValue }, { actionKey: 'personalRating' })}
+                >
+                  <StarIcon />
+                </button>
+              </span>
+            );
+          })}
+        </div>
+        <span className="rating-value" aria-live="polite">{valueLabel}</span>
+      </div>
+      <button
+        type="button"
+        className="text-action"
+        onClick={() => library.update(item.id, { personalRating: null }, { actionKey: 'personalRating' })}
+        disabled={busy || rating === null}
+      >
+        Clear rating / mark unrated
+      </button>
+    </fieldset>
+  );
+}
+
+function NoteEditor({ item, library, label }) {
+  const [note, setNote] = useState(item.note ?? '');
+  const busy = library.isActionBusy(item.id, 'note');
+  const noteLength = [...note].length;
+
+  useEffect(() => {
+    setNote(item.note ?? '');
+  }, [item.id, item.note]);
+
+  async function saveNote(value) {
+    await library.update(item.id, { note: value || null }, { actionKey: 'note' });
+  }
+
+  return (
+    <form
+      className="tracking-editor note-editor"
+      onSubmit={(event) => {
+        event.preventDefault();
+        saveNote(note);
+      }}
+    >
+      <label htmlFor={`library-note-${item.id}`}>Note for {label}</label>
+      <textarea
+        id={`library-note-${item.id}`}
+        value={note}
+        onChange={(event) => {
+          if ([...event.target.value].length <= 5000) setNote(event.target.value);
+        }}
+        aria-describedby={`library-note-help-${item.id}`}
+        disabled={busy}
+        rows={4}
+        placeholder="Keep a plain-text thought about this Library Item."
+      />
+      <div className="editor-meta" id={`library-note-help-${item.id}`}>
+        <span aria-live="polite">{noteLength} / 5,000 Unicode characters</span>
+        <span>Line breaks are kept.</span>
+      </div>
+      <div className="editor-actions">
+        <button type="submit" className="text-action" disabled={busy}>{busy ? 'Saving note…' : 'Save note'}</button>
+        <button
+          type="button"
+          className="text-action text-action--quiet"
+          onClick={() => saveNote('')}
+          disabled={busy || noteLength === 0}
+        >
+          Clear note
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function progressDraftFor(item) {
+  if (item.type === 'ANIME') return { episodesWatched: item.progress?.episodesWatched === undefined ? '' : String(item.progress.episodesWatched) };
+  if (item.type === 'TV') return {
+    season: item.progress?.season === undefined ? '' : String(item.progress.season),
+    episode: item.progress?.episode === undefined ? '' : String(item.progress.episode)
+  };
+  if (item.type === 'MOVIE') return { watched: item.progress?.watched === true };
+  return { hoursPlayed: item.progress?.hoursPlayed === undefined ? '' : String(item.progress.hoursPlayed) };
+}
+
+function ProgressEditor({ item, library, label }) {
+  const [draft, setDraft] = useState(() => progressDraftFor(item));
+  const [validationError, setValidationError] = useState('');
+  const busy = library.isActionBusy(item.id, 'progress');
+
+  useEffect(() => {
+    setDraft(progressDraftFor(item));
+    setValidationError('');
+  }, [item.id, item.progress, item.type]);
+
+  function progressValue() {
+    if (item.type === 'ANIME') {
+      const episodesWatched = Number(draft.episodesWatched);
+      return draft.episodesWatched !== '' && Number.isInteger(episodesWatched) && episodesWatched >= 0 ? { episodesWatched } : null;
+    }
+    if (item.type === 'TV') {
+      const season = Number(draft.season);
+      const episode = Number(draft.episode);
+      return draft.season !== '' && draft.episode !== ''
+        && Number.isInteger(season) && season >= 0 && Number.isInteger(episode) && episode >= 1
+        ? { season, episode }
+        : null;
+    }
+    if (item.type === 'MOVIE') return { watched: draft.watched === true };
+    const hoursPlayed = Number(draft.hoursPlayed);
+    return Number.isFinite(hoursPlayed) && hoursPlayed >= 0 && /^\d+(\.\d{1,2})?$/.test(draft.hoursPlayed) ? { hoursPlayed } : null;
+  }
+
+  async function saveProgress() {
+    const progress = progressValue();
+    if (!progress) {
+      setValidationError('Enter a valid progress value before saving.');
+      return;
+    }
+    setValidationError('');
+    await library.update(item.id, { progress }, { actionKey: 'progress' });
+  }
+
+  return (
+    <form
+      className="tracking-editor progress-editor"
+      onSubmit={(event) => { event.preventDefault(); saveProgress(); }}
+    >
+      <div className="editor-label">Progress for {label}</div>
+      {item.type === 'ANIME' && (
+        <label htmlFor={`library-progress-episodes-${item.id}`}>
+          Episodes watched
+          <input
+            id={`library-progress-episodes-${item.id}`}
+            type="number"
+            min="0"
+            step="1"
+            inputMode="numeric"
+            value={draft.episodesWatched}
+            onChange={(event) => setDraft({ episodesWatched: event.target.value })}
+            disabled={busy}
+          />
+        </label>
+      )}
+      {item.type === 'TV' && (
+        <div className="progress-pair">
+          <label htmlFor={`library-progress-season-${item.id}`}>
+            Season
+            <input
+              id={`library-progress-season-${item.id}`}
+              type="number"
+              min="0"
+              step="1"
+              inputMode="numeric"
+              value={draft.season}
+              onChange={(event) => setDraft((current) => ({ ...current, season: event.target.value }))}
+              disabled={busy}
+            />
+          </label>
+          <label htmlFor={`library-progress-episode-${item.id}`}>
+            Episode
+            <input
+              id={`library-progress-episode-${item.id}`}
+              type="number"
+              min="1"
+              step="1"
+              inputMode="numeric"
+              value={draft.episode}
+              onChange={(event) => setDraft((current) => ({ ...current, episode: event.target.value }))}
+              disabled={busy}
+            />
+          </label>
+        </div>
+      )}
+      {item.type === 'MOVIE' && (
+        <label className="favorite-toggle" htmlFor={`library-progress-watched-${item.id}`}>
+          <input
+            id={`library-progress-watched-${item.id}`}
+            type="checkbox"
+            checked={draft.watched}
+            onChange={(event) => setDraft({ watched: event.target.checked })}
+            disabled={busy}
+          />
+          Watched
+        </label>
+      )}
+      {item.type === 'GAME' && (
+        <label htmlFor={`library-progress-hours-${item.id}`}>
+          Hours played
+          <input
+            id={`library-progress-hours-${item.id}`}
+            type="number"
+            min="0"
+            step="0.01"
+            inputMode="decimal"
+            value={draft.hoursPlayed}
+            onChange={(event) => setDraft({ hoursPlayed: event.target.value })}
+            disabled={busy}
+          />
+        </label>
+      )}
+      {validationError && <p className="inline-error" role="alert">{validationError}</p>}
+      <div className="editor-actions">
+        <button type="submit" className="text-action" disabled={busy}>{busy ? 'Saving progress…' : 'Save progress'}</button>
+        <button
+          type="button"
+          className="text-action text-action--quiet"
+          onClick={() => { setValidationError(''); library.update(item.id, { progress: null }, { actionKey: 'progress' }); }}
+          disabled={busy || item.progress === null}
+        >
+          Clear progress
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function RelationshipEditor({ kind, item, library, taxonomy, label }) {
+  const isTag = kind === 'tag';
+  const field = isTag ? 'tags' : 'collections';
+  const resources = taxonomy[`${field}`];
+  const title = isTag ? 'Tags' : 'Collections';
+
+  return (
+    <fieldset className="tracking-editor relationship-editor" disabled={taxonomy.status !== 'success'}>
+      <legend>{title} for {label}</legend>
+      {taxonomy.status !== 'success' ? (
+        <p className="editor-empty">
+          {taxonomy.status === 'error' ? 'Relationships are unavailable. Retry the private relationship lists above.' : 'Loading private relationships…'}
+        </p>
+      ) : resources.length === 0 ? (
+        <p className="editor-empty">Create a {isTag ? 'Tag' : 'Collection'} above to attach it here.</p>
+      ) : (
+        <div className="relationship-options">
+          {resources.map((resource) => {
+            const attached = item[field].some((entry) => entry.id === resource.id);
+            const busy = library.isActionBusy(item.id, `${kind}:${resource.id}`);
+            return (
+              <label className="relationship-option" key={resource.id}>
+                <input
+                  type="checkbox"
+                  checked={attached}
+                  disabled={busy}
+                  onChange={(event) => {
+                    const change = event.target.checked ? library.attach : library.detach;
+                    change(item.id, kind, resource);
+                  }}
+                />
+                <span>{resource.name}</span>
+                {busy && <span className="relationship-option__status" aria-live="polite">Updating…</span>}
+              </label>
+            );
+          })}
+        </div>
+      )}
+    </fieldset>
+  );
+}
+
+function LibraryItem({ item, library, taxonomy }) {
+  const label = libraryItemLabel(item);
+  const itemError = library.getItemError(item.id);
+  const isRemoving = library.isActionBusy(item.id, 'remove');
+
+  return (
+    <li className="library-item" aria-busy={library.isItemBusy(item.id)}>
       <div className="library-item__identity">
         <p className="section-index">{getProviderLabel(item.provider).toUpperCase()} / {item.type}</p>
         <h3>{item.providerId}</h3>
@@ -657,8 +962,8 @@ function LibraryItem({ item, library }) {
         <select
           id={`library-status-${item.id}`}
           value={item.libraryStatus}
-          onChange={(event) => library.update(item.id, { libraryStatus: event.target.value })}
-          disabled={isUpdating}
+          onChange={(event) => library.update(item.id, { libraryStatus: event.target.value }, { actionKey: 'libraryStatus' })}
+          disabled={library.isActionBusy(item.id, 'libraryStatus')}
         >
           <option value="PLANNING">{formatLibraryStatus('PLANNING')}</option>
           <option value="IN_PROGRESS">{formatLibraryStatus('IN_PROGRESS')}</option>
@@ -671,26 +976,242 @@ function LibraryItem({ item, library }) {
             type="checkbox"
             aria-label={`Favorite ${label}`}
             checked={item.favorite}
-            onChange={(event) => library.update(item.id, { favorite: event.target.checked })}
-            disabled={isUpdating}
+            onChange={(event) => library.update(item.id, { favorite: event.target.checked }, { actionKey: 'favorite' })}
+            disabled={library.isActionBusy(item.id, 'favorite')}
           />
           <span>Favorite</span>
         </label>
+        <PersonalRating item={item} library={library} label={label} />
+        <ProgressEditor item={item} library={library} label={label} />
+        <NoteEditor item={item} library={library} label={label} />
+        <RelationshipEditor kind="tag" item={item} library={library} taxonomy={taxonomy} label={label} />
+        <RelationshipEditor kind="collection" item={item} library={library} taxonomy={taxonomy} label={label} />
+        {itemError && <p className="form-error" role="alert">{formatApiError(itemError, 'This Library Item action was rejected by the server.')}</p>}
         <button
           type="button"
           className="search-action search-action--secondary"
           onClick={() => library.remove(item.id)}
-          disabled={isUpdating}
+          disabled={isRemoving}
         >
-          {library.action?.type === 'remove' && isUpdating ? 'Removing…' : `Remove ${label}`}
+          {isRemoving ? 'Removing…' : `Remove ${label}`}
         </button>
       </div>
     </li>
   );
 }
 
-function LibraryView({ auth, library, onRequestSignIn }) {
+function LibraryFilters({ library, taxonomy }) {
+  const [draft, setDraft] = useState({
+    libraryStatus: library.filters.libraryStatus ?? '',
+    favorite: library.filters.favorite === undefined ? '' : String(library.filters.favorite),
+    tagId: library.filters.tagId ?? '',
+    collectionId: library.filters.collectionId ?? ''
+  });
+
+  useEffect(() => {
+    setDraft({
+      libraryStatus: library.filters.libraryStatus ?? '',
+      favorite: library.filters.favorite === undefined ? '' : String(library.filters.favorite),
+      tagId: library.filters.tagId ?? '',
+      collectionId: library.filters.collectionId ?? ''
+    });
+  }, [library.filters]);
+
+  function apply(event) {
+    event.preventDefault();
+    library.applyFilters({
+      libraryStatus: draft.libraryStatus || undefined,
+      favorite: draft.favorite === '' ? undefined : draft.favorite === 'true',
+      tagId: draft.tagId || undefined,
+      collectionId: draft.collectionId || undefined
+    });
+  }
+
+  function clear() {
+    const next = { libraryStatus: '', favorite: '', tagId: '', collectionId: '' };
+    setDraft(next);
+    library.applyFilters({});
+  }
+
+  return (
+    <form className="library-filters" onSubmit={apply} aria-label="Filter Library Items">
+      <div className="library-filters__heading">
+        <div>
+          <p className="section-index">LIBRARY / FOCUS</p>
+          <h3>Filter the signal.</h3>
+        </div>
+        <p>Filters stay applied while you load more Library Items.</p>
+      </div>
+      <div className="library-filters__fields">
+        <label htmlFor="library-filter-status">
+          Library Status
+          <select id="library-filter-status" value={draft.libraryStatus} onChange={(event) => setDraft((current) => ({ ...current, libraryStatus: event.target.value }))}>
+            <option value="">All statuses</option>
+            {LIBRARY_STATUS_VALUES.map((status) => <option value={status} key={status}>{formatLibraryStatus(status)}</option>)}
+          </select>
+        </label>
+        <label htmlFor="library-filter-favorite">
+          Favorite
+          <select id="library-filter-favorite" value={draft.favorite} onChange={(event) => setDraft((current) => ({ ...current, favorite: event.target.value }))}>
+            <option value="">All Library Items</option>
+            <option value="true">Favorites only</option>
+            <option value="false">Not favorites</option>
+          </select>
+        </label>
+        <label htmlFor="library-filter-tag">
+          Tag
+          <select id="library-filter-tag" value={draft.tagId} onChange={(event) => setDraft((current) => ({ ...current, tagId: event.target.value }))}>
+            <option value="">All Tags</option>
+            {taxonomy.tags.map((tag) => <option value={tag.id} key={tag.id}>{tag.name}</option>)}
+          </select>
+        </label>
+        <label htmlFor="library-filter-collection">
+          Collection
+          <select id="library-filter-collection" value={draft.collectionId} onChange={(event) => setDraft((current) => ({ ...current, collectionId: event.target.value }))}>
+            <option value="">All Collections</option>
+            {taxonomy.collections.map((collection) => <option value={collection.id} key={collection.id}>{collection.name}</option>)}
+          </select>
+        </label>
+      </div>
+      <div className="editor-actions">
+        <button type="submit" className="search-action search-action--primary" disabled={library.status === 'loading'}>Apply filters</button>
+        <button type="button" className="text-action text-action--quiet" onClick={clear} disabled={library.status === 'loading'}>Clear filters</button>
+      </div>
+    </form>
+  );
+}
+
+function TaxonomyResourceRow({ kind, resource, taxonomy, onRename, onRemove }) {
+  const [name, setName] = useState(resource.name);
+  const error = taxonomy.getError(kind, resource.id);
+  const busy = taxonomy.isActionBusy(kind, resource.id);
+
+  useEffect(() => setName(resource.name), [resource.name]);
+
+  return (
+    <li className="taxonomy-resource">
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          onRename(kind, resource.id, name);
+        }}
+      >
+        <label htmlFor={`${kind}-name-${resource.id}`}>{kind === 'tag' ? 'Tag' : 'Collection'} name</label>
+        <div className="taxonomy-resource__edit">
+          <input
+            id={`${kind}-name-${resource.id}`}
+            value={name}
+            onChange={(event) => { if ([...event.target.value].length <= 50) setName(event.target.value); }}
+            disabled={busy}
+          />
+          <button type="submit" className="text-action" disabled={busy}>{busy ? 'Saving…' : 'Rename'}</button>
+        </div>
+      </form>
+      <button
+        type="button"
+        className="text-action text-action--danger"
+        aria-label={`Delete ${kind} ${resource.name}`}
+        onClick={() => onRemove(kind, resource.id)}
+        disabled={busy}
+      >
+        {busy ? 'Deleting…' : `Delete ${kind}`}
+      </button>
+      {error && <p className="inline-error" role="alert">{formatApiError(error, `The ${kind} could not be changed.`)}</p>}
+    </li>
+  );
+}
+
+function TaxonomyResourceGroup({ kind, resources, taxonomy, onRename, onRemove }) {
+  const title = kind === 'tag' ? 'Tags' : 'Collections';
+  const singular = kind === 'tag' ? 'Tag' : 'Collection';
+  const createError = taxonomy.getError(kind);
+  const createBusy = taxonomy.isActionBusy(kind);
+  const pagination = kind === 'tag' ? taxonomy.tagPagination : taxonomy.collectionPagination;
+  const loadingMore = taxonomy.loadingMore[kind];
+  const pageError = taxonomy.pageErrors[kind];
+  const [name, setName] = useState('');
+
+  return (
+    <div className="taxonomy-group">
+      <div className="taxonomy-group__heading">
+        <h3>{title}</h3>
+        <span>{resources.length} loaded</span>
+      </div>
+      <form
+        className="taxonomy-create"
+        onSubmit={async (event) => {
+          event.preventDefault();
+          const created = await taxonomy.create(kind, name);
+          if (created) setName('');
+        }}
+      >
+        <label htmlFor={`new-${kind}`}>Create {singular}</label>
+        <div className="taxonomy-create__fields">
+          <input
+            id={`new-${kind}`}
+            value={name}
+            onChange={(event) => { if ([...event.target.value].length <= 50) setName(event.target.value); }}
+            placeholder={`New ${singular.toLowerCase()} name`}
+            required
+            disabled={createBusy}
+          />
+          <button type="submit" className="text-action" disabled={createBusy}>{createBusy ? 'Creating…' : `Create ${singular}`}</button>
+        </div>
+      </form>
+      {createError && <p className="inline-error" role="alert">{formatApiError(createError, `The ${singular} could not be created.`)}</p>}
+      {resources.length > 0 && (
+        <ul className="taxonomy-list" aria-label={title}>
+          {resources.map((resource) => <TaxonomyResourceRow key={resource.id} kind={kind} resource={resource} taxonomy={taxonomy} onRename={onRename} onRemove={onRemove} />)}
+        </ul>
+      )}
+      {pageError && (
+        <div className="page-error" role="alert">
+          <span>Page {pageError.page} could not be loaded.</span>
+          <button type="button" className="search-action search-action--secondary" onClick={() => taxonomy.retryPage(kind)}>
+            Retry page {pageError.page}
+          </button>
+        </div>
+      )}
+      {pagination?.hasMore && (
+        <button type="button" className="search-action search-action--secondary" onClick={() => taxonomy.loadMore(kind)} disabled={loadingMore}>
+          {loadingMore ? `Loading more ${title}…` : `Load more ${title}`}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function TaxonomyPanel({ taxonomy, onRename, onRemove }) {
+  return (
+    <section className="taxonomy-panel" aria-labelledby="taxonomy-title" aria-busy={taxonomy.isBusy}>
+      <div className="taxonomy-panel__heading">
+        <div>
+          <p className="section-index">LIBRARY / RELATIONSHIPS</p>
+          <h3 id="taxonomy-title">Shape your signal.</h3>
+        </div>
+        <p>Tags and Collections are private. Deleting one removes only its memberships; saved Library Items stay.</p>
+      </div>
+      {taxonomy.status === 'loading' && <p className="library-announcement" aria-live="polite">Loading your Tags and Collections…</p>}
+      {taxonomy.status === 'error' && (
+        <div className="library-state library-state--error" role="alert">
+          <h3>Relationships did not come through.</h3>
+          <p>{formatApiError(taxonomy.error, 'Tags and Collections are currently unavailable.')}</p>
+          <button type="button" className="search-action search-action--secondary" onClick={taxonomy.retry}>Retry Tags and Collections</button>
+        </div>
+      )}
+      {taxonomy.status === 'success' && (
+        <div className="taxonomy-groups">
+          <TaxonomyResourceGroup kind="tag" resources={taxonomy.tags} taxonomy={taxonomy} onRename={onRename} onRemove={onRemove} />
+          <TaxonomyResourceGroup kind="collection" resources={taxonomy.collections} taxonomy={taxonomy} onRename={onRename} onRemove={onRemove} />
+        </div>
+      )}
+    </section>
+  );
+}
+
+function LibraryView({ auth, library, taxonomy, onRequestSignIn, onRename, onRemove }) {
   const loading = Boolean(auth.user && (library.status === 'idle' || library.status === 'loading'));
+  const hasFilters = Object.values(library.filters).some((value) => value !== undefined);
 
   return (
     <section className="library-section" id="library" aria-labelledby="library-title" aria-busy={loading}>
@@ -699,8 +1220,8 @@ function LibraryView({ auth, library, onRequestSignIn }) {
           <h2 id="library-title">Your library.</h2>
           <p className="section-index">PERSONAL SIGNAL / REFERENCES</p>
         </div>
-        <code>GET /api/library</code>
-      </div>
+         <code>GET /api/library</code>
+       </div>
 
       {!auth.user && (
         <div className="library-state">
@@ -721,6 +1242,9 @@ function LibraryView({ auth, library, onRequestSignIn }) {
         </div>
       )}
 
+      {auth.user && <LibraryFilters library={library} taxonomy={taxonomy} />}
+      {auth.user && <TaxonomyPanel taxonomy={taxonomy} onRename={onRename} onRemove={onRemove} />}
+
       {auth.user && library.status === 'error' && (
         <div className="library-state library-state--error" role="alert">
           <span className="state-mark" aria-hidden="true">!</span>
@@ -733,18 +1257,34 @@ function LibraryView({ auth, library, onRequestSignIn }) {
       {auth.user && library.status === 'success' && library.results.length === 0 && (
         <div className="library-state">
           <span className="state-mark" aria-hidden="true">0</span>
-          <h3>Your library is clear.</h3>
-          <p>Save a result from Search the signal to create your first stored reference.</p>
+          <h3>{hasFilters ? 'No Library Items match.' : 'Your library is clear.'}</h3>
+          <p>{hasFilters ? 'Try another filter combination or clear the current focus.' : 'Save a result from Search the signal to create your first stored reference.'}</p>
+          {hasFilters && <button type="button" className="search-action search-action--secondary" onClick={() => library.applyFilters({})}>Clear filters</button>}
         </div>
       )}
 
       {auth.user && library.status === 'success' && library.results.length > 0 && (
         <ul className="library-list" aria-label="Saved library items">
-          {library.results.map((item) => <LibraryItem item={item} library={library} key={item.id} />)}
+          {library.results.map((item) => <LibraryItem item={item} library={library} taxonomy={taxonomy} key={item.id} />)}
         </ul>
       )}
 
-      {auth.user && library.error && library.status !== 'error' && (
+      {auth.user && library.pageError && (
+        <div className="page-error" role="alert">
+          <span>Page {library.pageError.page} could not be loaded.</span>
+          <button type="button" className="search-action search-action--secondary" onClick={library.retryPage}>Retry page {library.pageError.page}</button>
+        </div>
+      )}
+
+      {auth.user && library.status === 'success' && library.pagination?.hasMore && (
+        <div className="load-more-wrap">
+          <button type="button" className="search-action search-action--primary" onClick={library.loadMore} disabled={library.loadingPage}>
+            {library.loadingPage ? 'Loading more…' : 'Load more Library Items'}
+          </button>
+        </div>
+      )}
+
+      {auth.user && library.error && library.status !== 'error' && !library.pageError && (
         <p className="form-error" role="alert">{formatApiError(library.error, 'The library action could not be completed.')}</p>
       )}
     </section>
@@ -767,6 +1307,17 @@ export default function App() {
     enabled: auth.status === 'authenticated',
     onAuthenticationRequired: handleAuthenticationRequired
   });
+  const taxonomy = useTaxonomy({
+    enabled: auth.status === 'authenticated',
+    onAuthenticationRequired: handleAuthenticationRequired
+  });
+
+  const renameResource = useCallback((kind, id, name) => taxonomy.update(kind, id, name), [taxonomy.update]);
+  const removeResource = useCallback(async (kind, id) => {
+    const removed = await taxonomy.remove(kind, id);
+    if (removed) library.retry();
+    return removed;
+  }, [library.retry, taxonomy.remove]);
 
   const requestSignIn = () => {
     setAuthMode('login');
@@ -811,7 +1362,14 @@ export default function App() {
           onRequestSignIn={requestSignIn}
         />
 
-        <LibraryView auth={auth} library={library} onRequestSignIn={requestSignIn} />
+        <LibraryView
+          auth={auth}
+          library={library}
+          taxonomy={taxonomy}
+          onRequestSignIn={requestSignIn}
+          onRename={renameResource}
+          onRemove={removeResource}
+        />
 
         <section className="health-section" id="health-check" aria-labelledby="health-title">
           <div className="section-heading">
@@ -847,13 +1405,13 @@ export default function App() {
               <p className="section-index">ROADMAP / QUEUED</p>
             </div>
           </div>
-          <p>Discovery, local authentication, and reference libraries are live for local and staging use. Google authentication, account recovery, and richer tracking remain future signals.</p>
+          <p>Discovery, local authentication, and private tracking libraries are live for local and staging use. Google authentication and account recovery remain future signals.</p>
         </section>
       </main>
 
       <footer className="site-footer" id="credits" aria-labelledby="credits-title">
         <div className="site-footer__identity">
-          <span>GORAKU BASE / PHASE 5</span>
+          <span>GORAKU BASE / PHASE 6.5</span>
           <span>ANILIST + MYANIMELIST + TMDB + THEGAMESDB + RAWG / UNOFFICIAL</span>
         </div>
         <div className="tmdb-credits">
