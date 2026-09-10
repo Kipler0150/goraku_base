@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import request from 'supertest';
 import { createApp } from '../server/app.js';
-import { LibraryConflictError } from '../server/library.js';
+import { LibraryConflictError, LibraryValidationError } from '../server/library.js';
 
 const APP_ORIGIN = 'http://localhost:5173';
 const USER = { id: 'user-1', email: 'user@example.com' };
@@ -25,6 +25,11 @@ function createLibraryFixture() {
     providerId: '12345',
     libraryStatus: 'PLANNING',
     favorite: false,
+    personalRating: null,
+    note: null,
+    progress: null,
+    tags: [],
+    collections: [],
     createdAt: '2026-09-09T00:00:00.000Z',
     updatedAt: '2026-09-09T00:00:00.000Z'
   };
@@ -159,6 +164,42 @@ describe('HTTP library routes', () => {
     assert.equal(tooMany.body.error.code, 'VALIDATION_ERROR');
   });
 
+  it('passes focused Library filters and rejects invalid filter values', async () => {
+    const fixture = createLibraryFixture();
+    const app = createApp({ authService: fixture.authService, libraryRepository: fixture.repository, appOrigin: APP_ORIGIN });
+    const tagId = '00000000-0000-4000-8000-000000000010';
+    const collectionId = '00000000-0000-4000-8000-000000000011';
+
+    const filtered = await request(app)
+      .get(`/api/library?libraryStatus=COMPLETED&favorite=true&tagId=${tagId}&collectionId=${collectionId}&page=2&perPage=5`)
+      .set('Cookie', SESSION_COOKIE);
+    const invalidStatus = await request(app)
+      .get('/api/library?libraryStatus=published')
+      .set('Cookie', SESSION_COOKIE);
+    const invalidFavorite = await request(app)
+      .get('/api/library?favorite=yes')
+      .set('Cookie', SESSION_COOKIE);
+    const invalidTag = await request(app)
+      .get('/api/library?tagId=not-a-uuid')
+      .set('Cookie', SESSION_COOKIE);
+
+    assert.equal(filtered.status, 200);
+    assert.deepEqual(fixture.calls.at(-1), {
+      method: 'list',
+      userId: USER.id,
+      page: 2,
+      perPage: 5,
+      libraryStatus: 'COMPLETED',
+      favorite: true,
+      tagId,
+      collectionId
+    });
+    assert.equal(invalidStatus.status, 400);
+    assert.equal(invalidFavorite.status, 400);
+    assert.equal(invalidTag.status, 400);
+    assert.equal(fixture.calls.filter((call) => call.method === 'list').length, 1);
+  });
+
   it('rejects unsupported identities, unknown fields, and invalid pagination', async () => {
     const fixture = createLibraryFixture();
     const app = createApp({ authService: fixture.authService, libraryRepository: fixture.repository, appOrigin: APP_ORIGIN });
@@ -258,6 +299,93 @@ describe('HTTP library routes', () => {
     assert.equal(immutable.status, 400);
     assert.equal(empty.status, 400);
     assert.equal(fixture.calls.filter((call) => call.method === 'update').length, 1);
+  });
+
+  it('patches scalar tracking fields, preserves zero and false, and clears nullable values', async () => {
+    const fixture = createLibraryFixture();
+    const app = createApp({ authService: fixture.authService, libraryRepository: fixture.repository, appOrigin: APP_ORIGIN });
+    const created = await request(app)
+      .post('/api/library')
+      .set('Origin', APP_ORIGIN)
+      .set('Cookie', SESSION_COOKIE)
+      .send({ provider: 'thegamesdb', type: 'game', providerId: '42' });
+
+    const tracked = await request(app)
+      .patch(`/api/library/${created.body.id}`)
+      .set('Origin', APP_ORIGIN)
+      .set('Cookie', SESSION_COOKIE)
+      .send({ personalRating: 0, note: 'A useful note', progress: { hoursPlayed: 12.5 } });
+
+    assert.equal(tracked.status, 200);
+    assert.equal(tracked.body.personalRating, 0);
+    assert.equal(tracked.body.note, 'A useful note');
+    assert.deepEqual(tracked.body.progress, { hoursPlayed: 12.5 });
+
+    const cleared = await request(app)
+      .patch(`/api/library/${created.body.id}`)
+      .set('Origin', APP_ORIGIN)
+      .set('Cookie', SESSION_COOKIE)
+      .send({ personalRating: null, note: '', progress: null });
+
+    assert.equal(cleared.status, 200);
+    assert.equal(cleared.body.personalRating, null);
+    assert.equal(cleared.body.note, null);
+    assert.equal(cleared.body.progress, null);
+    assert.deepEqual(fixture.calls.filter((call) => call.method === 'update').map(({ changes }) => changes), [
+      { personalRating: 0, note: 'A useful note', progress: { hoursPlayed: 12.5 } },
+      { personalRating: null, note: null, progress: null }
+    ]);
+  });
+
+  it('rejects an invalid field before changing another field in the same patch', async () => {
+    const fixture = createLibraryFixture();
+    const app = createApp({ authService: fixture.authService, libraryRepository: fixture.repository, appOrigin: APP_ORIGIN });
+    const created = await request(app)
+      .post('/api/library')
+      .set('Origin', APP_ORIGIN)
+      .set('Cookie', SESSION_COOKIE)
+      .send({ provider: 'thegamesdb', type: 'game', providerId: '42' });
+
+    const response = await request(app)
+      .patch(`/api/library/${created.body.id}`)
+      .set('Origin', APP_ORIGIN)
+      .set('Cookie', SESSION_COOKIE)
+      .send({ favorite: true, personalRating: 9.1 });
+
+    assert.equal(response.status, 400);
+    assert.equal(response.body.error.code, 'VALIDATION_ERROR');
+    assert.equal(fixture.calls.filter((call) => call.method === 'update').length, 0);
+    assert.equal(fixture.items.get(created.body.id).favorite, false);
+  });
+
+  it('maps repository type-specific Progress rejection without updating the item', async () => {
+    const fixture = createLibraryFixture();
+    const originalUpdate = fixture.repository.update;
+    const repository = {
+      ...fixture.repository,
+      async update(input) {
+        if (input.changes.progress) {
+          throw new LibraryValidationError('GAME progress is invalid.', [{ field: 'progress', message: 'GAME progress is invalid.' }]);
+        }
+        return originalUpdate(input);
+      }
+    };
+    const app = createApp({ authService: fixture.authService, libraryRepository: repository, appOrigin: APP_ORIGIN });
+    const created = await request(app)
+      .post('/api/library')
+      .set('Origin', APP_ORIGIN)
+      .set('Cookie', SESSION_COOKIE)
+      .send({ provider: 'thegamesdb', type: 'game', providerId: '42' });
+
+    const response = await request(app)
+      .patch(`/api/library/${created.body.id}`)
+      .set('Origin', APP_ORIGIN)
+      .set('Cookie', SESSION_COOKIE)
+      .send({ favorite: true, progress: { episodesWatched: 1 } });
+
+    assert.equal(response.status, 400);
+    assert.equal(response.body.error.code, 'VALIDATION_ERROR');
+    assert.equal(fixture.items.get(created.body.id).favorite, false);
   });
 
   it('hides missing and non-owned Library Items and deletes an owned item', async () => {
