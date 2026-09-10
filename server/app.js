@@ -18,6 +18,12 @@ import {
   MEDIA_SEARCH_TYPES,
   providersUnavailable
 } from './media-search.js';
+import { getProvidersForType, PROVIDER_CAPABILITY_MATRIX } from './media-capabilities.js';
+import {
+  CAPABILITY_UNSUPPORTED_CODE,
+  createMediaDetailsService,
+  MediaCapabilityError
+} from './media-details.js';
 import { createLibraryRouter } from './library-http.js';
 import { createTagsCollectionsRouter } from './tags-collections-http.js';
 
@@ -28,6 +34,8 @@ const NOT_FOUND_ERROR = {
 };
 
 const SEARCH_QUERY_FIELDS = new Set(['type', 'q', 'page', 'perPage', 'includeAdult', 'provider', 'cursor', 'retryProvider']);
+const MEDIA_DETAIL_QUERY_FIELDS = new Set(['includeAdult']);
+const MEDIA_DETAIL_TYPES = new Set(['anime', 'movie', 'tv', 'game']);
 
 function validationError(details) {
   return {
@@ -107,9 +115,7 @@ function validateMediaSearchQuery(query) {
     if (searchQuery.type === 'all') {
       details.push({ field: 'provider', message: 'provider cannot be used with type "all".' });
     } else {
-      const providers = searchQuery.type === 'anime'
-        ? ['anilist', 'myanimelist']
-        : searchQuery.type === 'game' ? ['thegamesdb', 'rawg'] : ['tmdb'];
+      const providers = getProvidersForType(searchQuery.type, 'search');
       if (!hasSingleValue('provider') || !providers.includes(searchQuery.provider)) {
         details.push({ field: 'provider', message: `provider must be ${providers.join(' or ')}.` });
       } else {
@@ -157,6 +163,52 @@ function validateMediaSearchQuery(query) {
   };
 }
 
+function validateMediaDetailsRequest(params, query) {
+  const details = [];
+  const detailQuery = query && typeof query === 'object' ? query : {};
+
+  for (const [field, value] of Object.entries(detailQuery)) {
+    if (!MEDIA_DETAIL_QUERY_FIELDS.has(field)) {
+      details.push({ field, message: 'Unknown query parameter.' });
+    }
+    if (Array.isArray(value)) {
+      details.push({ field, message: 'Query parameters may only appear once.' });
+    }
+  }
+
+  const provider = params?.provider;
+  const type = params?.type;
+  const providerKnown = typeof provider === 'string' && Object.hasOwn(PROVIDER_CAPABILITY_MATRIX, provider);
+  const typeKnown = typeof type === 'string' && MEDIA_DETAIL_TYPES.has(type);
+
+  if (!providerKnown) {
+    details.push({ field: 'provider', message: 'provider must be a supported Provider.' });
+  }
+  if (!typeKnown) {
+    details.push({ field: 'type', message: 'type must be exactly "anime", "movie", "tv", or "game".' });
+  }
+  if (providerKnown && typeKnown && !PROVIDER_CAPABILITY_MATRIX[provider][type]) {
+    details.push({ field: 'provider', message: `provider does not support type "${type}".` });
+  }
+
+  const providerId = params?.id;
+  if (typeof providerId !== 'string' || !/^[1-9]\d*$/.test(providerId)) {
+    details.push({ field: 'id', message: 'id must be a positive decimal Provider ID.' });
+  }
+
+  let includeAdult = true;
+  if (Object.hasOwn(detailQuery, 'includeAdult') && !Array.isArray(detailQuery.includeAdult)) {
+    if (!['true', 'false'].includes(detailQuery.includeAdult)) {
+      details.push({ field: 'includeAdult', message: 'includeAdult must be true or false.' });
+    } else {
+      includeAdult = detailQuery.includeAdult === 'true';
+    }
+  }
+
+  if (details.length > 0) return validationError(details);
+  return { provider, type, providerId, includeAdult };
+}
+
 function sendErrorResponse(response, status, error) {
   response.status(status).json({ error: { ...error, details: [] } });
 }
@@ -181,10 +233,18 @@ export function createApp({
   myanimelistAdapter = createMyAnimeListAdapter(),
   tmdbAdapter = createTMDBAdapter(),
   thegamesdbAdapter = createTheGamesDBAdapter(),
-  rawgAdapter = createRAWGAdapter()
+  rawgAdapter = createRAWGAdapter(),
+  mediaDetailsService = null
 } = {}) {
   const app = express();
   const mediaSearch = createMediaSearchService({ anilistAdapter, myanimelistAdapter, tmdbAdapter, thegamesdbAdapter, rawgAdapter });
+  const mediaDetails = mediaDetailsService ?? createMediaDetailsService({
+    anilistAdapter,
+    myanimelistAdapter,
+    tmdbAdapter,
+    thegamesdbAdapter,
+    rawgAdapter
+  });
 
   app.disable('x-powered-by');
   app.use('/api', createMutationOriginMiddleware({ appOrigin }));
@@ -223,6 +283,32 @@ export function createApp({
       }
       const defaultProvider = validated.type === 'anime' ? 'anilist' : validated.type === 'game' ? 'thegamesdb' : 'tmdb';
       providerFailureResponse(response, error, error?.provider ?? validated.provider ?? defaultProvider);
+    }
+  });
+
+  app.get('/api/media/:provider/:type/:id', async (request, response) => {
+    const validated = validateMediaDetailsRequest(request.params, request.query);
+    if (validated.status) {
+      response.status(validated.status).json(validated.body);
+      return;
+    }
+
+    try {
+      const result = await mediaDetails.getDetails(validated);
+      response.status(200).json(result);
+    } catch (error) {
+      if (error instanceof MediaCapabilityError || error?.code === CAPABILITY_UNSUPPORTED_CODE) {
+        sendErrorResponse(response, 501, {
+          code: CAPABILITY_UNSUPPORTED_CODE,
+          message: 'This Provider does not support the requested operation.'
+        });
+        return;
+      }
+      if (error?.code === 'PROVIDER_NOT_FOUND') {
+        sendErrorResponse(response, 404, NOT_FOUND_ERROR);
+        return;
+      }
+      providerFailureResponse(response, error, validated.provider);
     }
   });
 

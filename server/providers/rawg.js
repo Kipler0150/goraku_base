@@ -2,6 +2,7 @@ import { createMedia } from '../../shared/media.js';
 import { ProviderError, PROVIDER_ERROR_CODES } from './errors.js';
 
 export const RAWG_ENDPOINT = 'https://api.rawg.io/api/games';
+export const RAWG_DETAILS_ENDPOINT = RAWG_ENDPOINT;
 export const RAWG_TIMEOUT_MS = 5_000;
 export const RAWG_PAGE_SIZE = 20;
 
@@ -10,6 +11,7 @@ const ERROR_MESSAGES = Object.freeze({
   [PROVIDER_ERROR_CODES.RATE_LIMITED]: 'RAWG rate limit reached.',
   [PROVIDER_ERROR_CODES.INVALID_RESPONSE]: 'RAWG returned an invalid response.',
   [PROVIDER_ERROR_CODES.UNAVAILABLE]: 'RAWG is currently unavailable.',
+  [PROVIDER_ERROR_CODES.NOT_FOUND]: 'RAWG media was not found.',
   [PROVIDER_ERROR_CODES.ERROR]: 'RAWG request failed.'
 });
 
@@ -155,7 +157,8 @@ function normalizePayload(payload, page, perPage, includeAdult) {
   };
 }
 
-function errorForStatus(status) {
+function errorForStatus(status, details = false) {
+  if (details && status === 404) return providerError(PROVIDER_ERROR_CODES.NOT_FOUND);
   if (status === 401 || status === 403 || status === 503) return providerError(PROVIDER_ERROR_CODES.UNAVAILABLE);
   if (status === 429) return providerError(PROVIDER_ERROR_CODES.RATE_LIMITED);
   if (status === 408 || status === 504) return providerError(PROVIDER_ERROR_CODES.TIMEOUT);
@@ -171,17 +174,21 @@ function validateSearchOptions({ type, query, page, perPage, includeAdult }) {
 /**
  * Create the server-side RAWG game search boundary.
  *
- * @param {{apiKey?: string, request?: Function, endpoint?: string, timeoutMs?: number}} options
+ * @param {{apiKey?: string, request?: Function, endpoint?: string, detailsEndpoint?: string, timeoutMs?: number}} options
  */
 export function createRAWGAdapter({
   apiKey = process.env.RAWG_API_KEY,
   request = globalThis.fetch,
   endpoint = RAWG_ENDPOINT,
+  detailsEndpoint = RAWG_DETAILS_ENDPOINT,
   timeoutMs = RAWG_TIMEOUT_MS
 } = {}) {
   if (typeof request !== 'function') throw new TypeError('An HTTP request function is required.');
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new RangeError('timeoutMs must be positive.');
   const normalizedKey = typeof apiKey === 'string' ? apiKey.trim() : '';
+  const normalizedDetailsEndpoint = (typeof detailsEndpoint === 'string' && detailsEndpoint.trim()
+    ? detailsEndpoint.trim()
+    : RAWG_DETAILS_ENDPOINT).replace(/\/+$/, '');
 
   return {
     enabled: Boolean(normalizedKey),
@@ -236,6 +243,60 @@ export function createRAWGAdapter({
           throw invalidResponse();
         }
         return normalizePayload(payload, page, perPage, includeAdult);
+      } catch (error) {
+        if (error instanceof ProviderError) throw error;
+        if (timedOut || error?.name === 'AbortError') throw providerError(PROVIDER_ERROR_CODES.TIMEOUT);
+        throw providerError(PROVIDER_ERROR_CODES.ERROR);
+      } finally {
+        clearTimeout(timeoutHandle);
+      }
+    },
+    async getMediaDetails({ providerId, includeAdult = true } = {}) {
+      if (typeof providerId !== 'string' || !/^[1-9]\d*$/.test(providerId.trim())) {
+        throw invalidResponse();
+      }
+      if (!normalizedKey) throw providerError(PROVIDER_ERROR_CODES.UNAVAILABLE);
+
+      const url = new URL(`${normalizedDetailsEndpoint}/${providerId.trim()}`);
+      url.searchParams.set('key', normalizedKey);
+
+      const controller = new AbortController();
+      let timedOut = false;
+      let timeoutHandle;
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+          reject(providerError(PROVIDER_ERROR_CODES.TIMEOUT));
+        }, timeoutMs);
+      });
+
+      try {
+        const requestResult = await Promise.race([
+          Promise.resolve().then(() => request(url, {
+            method: 'GET',
+            headers: { accept: 'application/json' },
+            signal: controller.signal
+          })),
+          timeoutPromise
+        ]);
+        if (!requestResult || typeof requestResult !== 'object') throw invalidResponse();
+        if ((requestResult.status !== undefined && (requestResult.status < 200 || requestResult.status >= 300)) || requestResult.ok === false) {
+          throw errorForStatus(requestResult.status, true);
+        }
+        if (typeof requestResult.json !== 'function') throw invalidResponse();
+
+        let payload;
+        try {
+          payload = await requestResult.json();
+        } catch {
+          throw invalidResponse();
+        }
+        const media = normalizeResult(payload);
+        if (!includeAdult && media.isAdult === true) {
+          throw providerError(PROVIDER_ERROR_CODES.NOT_FOUND);
+        }
+        return media;
       } catch (error) {
         if (error instanceof ProviderError) throw error;
         if (timedOut || error?.name === 'AbortError') throw providerError(PROVIDER_ERROR_CODES.TIMEOUT);

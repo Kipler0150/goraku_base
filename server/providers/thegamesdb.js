@@ -2,6 +2,7 @@ import { createMedia } from '../../shared/media.js';
 import { ProviderError, PROVIDER_ERROR_CODES } from './errors.js';
 
 export const THEGAMESDB_ENDPOINT = 'https://api.thegamesdb.net/v1.1/Games/ByGameName';
+export const THEGAMESDB_DETAILS_ENDPOINT = 'https://api.thegamesdb.net/v1/Games/ByGameID';
 export const THEGAMESDB_TIMEOUT_MS = 5_000;
 export const THEGAMESDB_PAGE_SIZE = 20;
 
@@ -10,6 +11,7 @@ const ERROR_MESSAGES = Object.freeze({
   [PROVIDER_ERROR_CODES.RATE_LIMITED]: 'TheGamesDB rate limit reached.',
   [PROVIDER_ERROR_CODES.INVALID_RESPONSE]: 'TheGamesDB returned an invalid response.',
   [PROVIDER_ERROR_CODES.UNAVAILABLE]: 'TheGamesDB is currently unavailable.',
+  [PROVIDER_ERROR_CODES.NOT_FOUND]: 'TheGamesDB media was not found.',
   [PROVIDER_ERROR_CODES.ERROR]: 'TheGamesDB request failed.'
 });
 
@@ -159,7 +161,16 @@ function normalizePayload(payload, page, includeAdult) {
   };
 }
 
-function errorForStatus(status, payload) {
+function normalizeDetailsPayload(payload) {
+  const root = assertObject(payload);
+  const data = assertObject(root.data);
+  if (!Array.isArray(data.games)) throw invalidResponse();
+  if (data.games.length === 0) throw providerError(PROVIDER_ERROR_CODES.NOT_FOUND);
+  return normalizeResult(data.games[0], root.include);
+}
+
+function errorForStatus(status, payload, details = false) {
+  if (details && status === 404) return providerError(PROVIDER_ERROR_CODES.NOT_FOUND);
   if (status === 403) {
     if (payload?.status === 'Invalid API key was provided.') return providerError(PROVIDER_ERROR_CODES.UNAVAILABLE);
     return providerError(PROVIDER_ERROR_CODES.RATE_LIMITED);
@@ -180,17 +191,21 @@ function validateSearchOptions({ type, query, page, perPage, includeAdult }) {
 /**
  * Create the server-side TheGamesDB game search boundary.
  *
- * @param {{apiKey?: string, request?: Function, endpoint?: string, timeoutMs?: number}} options
+ * @param {{apiKey?: string, request?: Function, endpoint?: string, detailsEndpoint?: string, timeoutMs?: number}} options
  */
 export function createTheGamesDBAdapter({
   apiKey = process.env.THEGAMESDB_API_KEY,
   request = globalThis.fetch,
   endpoint = THEGAMESDB_ENDPOINT,
+  detailsEndpoint = THEGAMESDB_DETAILS_ENDPOINT,
   timeoutMs = THEGAMESDB_TIMEOUT_MS
 } = {}) {
   if (typeof request !== 'function') throw new TypeError('An HTTP request function is required.');
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new RangeError('timeoutMs must be positive.');
   const normalizedKey = typeof apiKey === 'string' ? apiKey.trim() : '';
+  const normalizedDetailsEndpoint = (typeof detailsEndpoint === 'string' && detailsEndpoint.trim()
+    ? detailsEndpoint.trim()
+    : THEGAMESDB_DETAILS_ENDPOINT).replace(/\/+$/, '');
 
   return {
     enabled: Boolean(normalizedKey),
@@ -254,6 +269,71 @@ export function createTheGamesDBAdapter({
           throw invalidResponse();
         }
         return normalizePayload(payload, page, includeAdult);
+      } catch (error) {
+        if (error instanceof ProviderError) throw error;
+        if (timedOut || error?.name === 'AbortError') throw providerError(PROVIDER_ERROR_CODES.TIMEOUT);
+        throw providerError(PROVIDER_ERROR_CODES.ERROR);
+      } finally {
+        clearTimeout(timeoutHandle);
+      }
+    },
+    async getMediaDetails({ providerId, includeAdult = true } = {}) {
+      if (typeof providerId !== 'string' || !/^[1-9]\d*$/.test(providerId.trim())) {
+        throw invalidResponse();
+      }
+      if (!normalizedKey) throw providerError(PROVIDER_ERROR_CODES.UNAVAILABLE);
+
+      const url = new URL(normalizedDetailsEndpoint);
+      url.searchParams.set('apikey', normalizedKey);
+      url.searchParams.set('id', providerId.trim());
+      url.searchParams.set('fields', 'overview,rating,genres,developers,publishers,alternates');
+      url.searchParams.set('include', 'boxart,platform');
+
+      const controller = new AbortController();
+      let timedOut = false;
+      let timeoutHandle;
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+          reject(providerError(PROVIDER_ERROR_CODES.TIMEOUT));
+        }, timeoutMs);
+      });
+
+      try {
+        const requestResult = await Promise.race([
+          Promise.resolve().then(() => request(url, {
+            method: 'GET',
+            headers: { accept: 'application/json' },
+            signal: controller.signal
+          })),
+          timeoutPromise
+        ]);
+        if (!requestResult || typeof requestResult !== 'object') throw invalidResponse();
+        let errorPayload;
+        if ((requestResult.status !== undefined && (requestResult.status < 200 || requestResult.status >= 300)) || requestResult.ok === false) {
+          if (typeof requestResult.json === 'function') {
+            try {
+              errorPayload = await requestResult.json();
+            } catch {
+              errorPayload = null;
+            }
+          }
+          throw errorForStatus(requestResult.status, errorPayload, true);
+        }
+        if (typeof requestResult.json !== 'function') throw invalidResponse();
+
+        let payload;
+        try {
+          payload = await requestResult.json();
+        } catch {
+          throw invalidResponse();
+        }
+        const media = normalizeDetailsPayload(payload);
+        if (!includeAdult && media.isAdult === true) {
+          throw providerError(PROVIDER_ERROR_CODES.NOT_FOUND);
+        }
+        return media;
       } catch (error) {
         if (error instanceof ProviderError) throw error;
         if (timedOut || error?.name === 'AbortError') throw providerError(PROVIDER_ERROR_CODES.TIMEOUT);

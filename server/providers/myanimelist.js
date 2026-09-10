@@ -9,6 +9,7 @@ const ERROR_MESSAGES = Object.freeze({
   [PROVIDER_ERROR_CODES.RATE_LIMITED]: 'MyAnimeList rate limit reached.',
   [PROVIDER_ERROR_CODES.INVALID_RESPONSE]: 'MyAnimeList returned an invalid response.',
   [PROVIDER_ERROR_CODES.UNAVAILABLE]: 'MyAnimeList is currently unavailable.',
+  [PROVIDER_ERROR_CODES.NOT_FOUND]: 'MyAnimeList media was not found.',
   [PROVIDER_ERROR_CODES.ERROR]: 'MyAnimeList request failed.'
 });
 
@@ -153,7 +154,8 @@ function normalizePayload(payload, page, perPage, includeAdult) {
   };
 }
 
-function errorForStatus(status) {
+function errorForStatus(status, isSearchRequest = false) {
+  if (!isSearchRequest && status === 404) return providerError(PROVIDER_ERROR_CODES.NOT_FOUND);
   if (status === 403) return providerError(PROVIDER_ERROR_CODES.UNAVAILABLE);
   if (status === 429) return providerError(PROVIDER_ERROR_CODES.RATE_LIMITED);
   if (status === 408 || status === 504) return providerError(PROVIDER_ERROR_CODES.TIMEOUT);
@@ -211,7 +213,7 @@ export function createMyAnimeListAdapter({
         ]);
         if (!requestResult || typeof requestResult !== 'object') throw invalidResponse();
         if ((requestResult.status !== undefined && (requestResult.status < 200 || requestResult.status >= 300)) || requestResult.ok === false) {
-          throw errorForStatus(requestResult.status);
+          throw errorForStatus(requestResult.status, true);
         }
         if (typeof requestResult.json !== 'function') throw invalidResponse();
         let payload;
@@ -231,6 +233,63 @@ export function createMyAnimeListAdapter({
     },
     async searchAnime(options) {
       return this.searchMedia(options);
+    },
+    async getMediaDetails({ providerId, includeAdult = true } = {}) {
+      if (typeof providerId !== 'string' || !/^[1-9]\d*$/.test(providerId.trim())) {
+        throw invalidResponse();
+      }
+      if (!normalizedClientId) throw providerError(PROVIDER_ERROR_CODES.UNAVAILABLE);
+
+      const url = new URL(`${endpoint.replace(/\/+$/, '')}/${providerId.trim()}`);
+      url.searchParams.set('fields', FIELDS);
+
+      const controller = new AbortController();
+      let timedOut = false;
+      let timeoutHandle;
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+          reject(providerError(PROVIDER_ERROR_CODES.TIMEOUT));
+        }, timeoutMs);
+      });
+
+      try {
+        const requestResult = await Promise.race([
+          Promise.resolve().then(() => request(url, {
+            method: 'GET',
+            headers: {
+              accept: 'application/json',
+              'X-MAL-CLIENT-ID': normalizedClientId
+            },
+            signal: controller.signal
+          })),
+          timeoutPromise
+        ]);
+        if (!requestResult || typeof requestResult !== 'object') throw invalidResponse();
+        if ((requestResult.status !== undefined && (requestResult.status < 200 || requestResult.status >= 300)) || requestResult.ok === false) {
+          throw errorForStatus(requestResult.status);
+        }
+        if (typeof requestResult.json !== 'function') throw invalidResponse();
+
+        let payload;
+        try {
+          payload = await requestResult.json();
+        } catch {
+          throw invalidResponse();
+        }
+        const media = normalizeAnime(payload);
+        if (!includeAdult && media.isAdult === true) {
+          throw providerError(PROVIDER_ERROR_CODES.NOT_FOUND);
+        }
+        return media;
+      } catch (error) {
+        if (error instanceof ProviderError) throw error;
+        if (timedOut || error?.name === 'AbortError') throw providerError(PROVIDER_ERROR_CODES.TIMEOUT);
+        throw providerError(PROVIDER_ERROR_CODES.ERROR);
+      } finally {
+        clearTimeout(timeoutHandle);
+      }
     }
   };
 }

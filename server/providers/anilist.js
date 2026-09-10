@@ -9,6 +9,7 @@ const PROVIDER_ERROR_MESSAGES = Object.freeze({
   [PROVIDER_ERROR_CODES.RATE_LIMITED]: 'AniList rate limit reached.',
   [PROVIDER_ERROR_CODES.INVALID_RESPONSE]: 'AniList returned an invalid response.',
   [PROVIDER_ERROR_CODES.UNAVAILABLE]: 'AniList is currently unavailable.',
+  [PROVIDER_ERROR_CODES.NOT_FOUND]: 'AniList media was not found.',
   [PROVIDER_ERROR_CODES.ERROR]: 'AniList request failed.'
 });
 
@@ -32,6 +33,27 @@ const GRAPHQL_QUERY = `
         duration
         isAdult
       }
+    }
+  }
+`;
+
+const DETAILS_GRAPHQL_QUERY = `
+  query MediaDetails($id: Int!) {
+    Media(id: $id, type: ANIME) {
+      id
+      title { english romaji native }
+      description
+      coverImage { extraLarge large medium }
+      bannerImage
+      startDate { year month day }
+      genres
+      averageScore
+      status
+      staff { edges { role node { name { full } } } }
+      studios { edges { isMain node { name } } }
+      episodes
+      duration
+      isAdult
     }
   }
 `;
@@ -251,7 +273,19 @@ function normalizePayload(payload) {
   };
 }
 
-function errorForStatus(status) {
+function normalizeDetailsPayload(payload) {
+  const root = assertObject(payload);
+  if (Object.prototype.hasOwnProperty.call(root, 'errors')) {
+    if (!Array.isArray(root.errors)) throw invalidResponse();
+    throw new ProviderError(PROVIDER_ERROR_CODES.ERROR, 'AniList returned a provider error.');
+  }
+  const data = assertObject(root.data);
+  if (data.Media == null) throw new ProviderError(PROVIDER_ERROR_CODES.NOT_FOUND, PROVIDER_ERROR_MESSAGES[PROVIDER_ERROR_CODES.NOT_FOUND]);
+  return normalizeAnime(data.Media);
+}
+
+function errorForStatus(status, isSearchRequest = false) {
+  if (!isSearchRequest && status === 404) return new ProviderError(PROVIDER_ERROR_CODES.NOT_FOUND, PROVIDER_ERROR_MESSAGES[PROVIDER_ERROR_CODES.NOT_FOUND]);
   if (status === 403) return new ProviderError(PROVIDER_ERROR_CODES.UNAVAILABLE, PROVIDER_ERROR_MESSAGES[PROVIDER_ERROR_CODES.UNAVAILABLE]);
   if (status === 429) return new ProviderError(PROVIDER_ERROR_CODES.RATE_LIMITED, PROVIDER_ERROR_MESSAGES[PROVIDER_ERROR_CODES.RATE_LIMITED]);
   if (status === 408 || status === 504) return new ProviderError(PROVIDER_ERROR_CODES.TIMEOUT, PROVIDER_ERROR_MESSAGES[PROVIDER_ERROR_CODES.TIMEOUT]);
@@ -304,7 +338,7 @@ export function createAniListAdapter({
         if (!requestResult || typeof requestResult !== 'object') throw invalidResponse();
         const status = requestResult.status;
         if ((status !== undefined && (status < 200 || status >= 300)) || requestResult.ok === false) {
-          throw errorForStatus(status);
+          throw errorForStatus(status, true);
         }
         if (typeof requestResult.json !== 'function') throw invalidResponse();
 
@@ -327,6 +361,67 @@ export function createAniListAdapter({
     },
     async searchAnime(options) {
       return this.searchMedia(options);
+    },
+    async getMediaDetails({ providerId, includeAdult = true } = {}) {
+      if (typeof providerId !== 'string' || !/^[1-9]\d*$/.test(providerId.trim())) {
+        throw invalidResponse();
+      }
+
+      const controller = new AbortController();
+      let timedOut = false;
+      let timeoutHandle;
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+          reject(new ProviderError(PROVIDER_ERROR_CODES.TIMEOUT, PROVIDER_ERROR_MESSAGES[PROVIDER_ERROR_CODES.TIMEOUT]));
+        }, timeoutMs);
+      });
+
+      try {
+        const requestResult = await Promise.race([
+          Promise.resolve().then(() => request(endpoint, {
+            method: 'POST',
+            headers: {
+              accept: 'application/json',
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+              query: DETAILS_GRAPHQL_QUERY,
+              variables: { id: Number(providerId) }
+            }),
+            signal: controller.signal
+          })),
+          timeoutPromise
+        ]);
+
+        if (!requestResult || typeof requestResult !== 'object') throw invalidResponse();
+        const status = requestResult.status;
+        if ((status !== undefined && (status < 200 || status >= 300)) || requestResult.ok === false) {
+          throw errorForStatus(status);
+        }
+        if (typeof requestResult.json !== 'function') throw invalidResponse();
+
+        let payload;
+        try {
+          payload = await requestResult.json();
+        } catch {
+          throw invalidResponse();
+        }
+        const media = normalizeDetailsPayload(payload);
+        if (!includeAdult && media.isAdult === true) {
+          throw new ProviderError(PROVIDER_ERROR_CODES.NOT_FOUND, PROVIDER_ERROR_MESSAGES[PROVIDER_ERROR_CODES.NOT_FOUND]);
+        }
+        return media;
+      } catch (error) {
+        if (error instanceof ProviderError) throw error;
+        if (timedOut || error?.name === 'AbortError') {
+          throw new ProviderError(PROVIDER_ERROR_CODES.TIMEOUT, PROVIDER_ERROR_MESSAGES[PROVIDER_ERROR_CODES.TIMEOUT]);
+        }
+        throw new ProviderError(PROVIDER_ERROR_CODES.ERROR, PROVIDER_ERROR_MESSAGES[PROVIDER_ERROR_CODES.ERROR]);
+      } finally {
+        clearTimeout(timeoutHandle);
+      }
     }
   };
 }

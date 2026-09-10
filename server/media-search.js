@@ -26,6 +26,7 @@ export function formatProviderFailure(error, provider) {
     [PROVIDER_ERROR_CODES.RATE_LIMITED]: `${label} rate limit reached.`,
     [PROVIDER_ERROR_CODES.INVALID_RESPONSE]: `${label} returned an invalid response.`,
     [PROVIDER_ERROR_CODES.UNAVAILABLE]: `${label} is currently unavailable.`,
+    [PROVIDER_ERROR_CODES.NOT_FOUND]: `${label} media was not found.`,
     [PROVIDER_ERROR_CODES.ERROR]: `${label} request failed.`
   };
   return { code, message: messages[code] };
