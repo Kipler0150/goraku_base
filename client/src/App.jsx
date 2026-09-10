@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useHealthCheck } from './hooks/useHealthCheck.js';
 import { useAuth } from './hooks/useAuth.js';
 import { useLibrary } from './hooks/useLibrary.js';
 import { useMediaSearch } from './hooks/useMediaSearch.js';
+import { useMediaDetails } from './hooks/useMediaDetails.js';
+import { useMediaDiscovery } from './hooks/useMediaDiscovery.js';
+import { useMediaRecommendations } from './hooks/useMediaRecommendations.js';
 import { useTaxonomy } from './hooks/useTaxonomy.js';
 import { LIBRARY_STATUS_VALUES } from './api/library.js';
 import { mediaIdentity } from './mediaIdentity.js';
@@ -24,6 +27,16 @@ const PROVIDERS = Object.freeze({
   rawg: { label: 'RAWG', url: RAWG_URL }
 });
 const PROVIDER_ORDER = Object.freeze(['anilist', 'myanimelist', 'tmdb', 'thegamesdb', 'rawg']);
+const DISCOVERY_PROVIDERS = Object.freeze({
+  anime: ['anilist', 'myanimelist'],
+  movie: ['tmdb'],
+  tv: ['tmdb'],
+  game: ['thegamesdb', 'rawg']
+});
+
+function getDiscoveryProviders(type) {
+  return DISCOVERY_PROVIDERS[type] ?? [];
+}
 
 function ConnectionStatus({ status, error, onRetry }) {
   const isLoading = status === 'loading';
@@ -111,6 +124,14 @@ function formatApiError(error, fallback) {
   return fallback;
 }
 
+function getPublicMediaErrorKind(error) {
+  if (error?.code === 'CAPABILITY_UNSUPPORTED' || error?.status === 501) return 'unsupported';
+  if (error?.code === 'PROVIDER_RATE_LIMITED' || error?.code === 'APPLICATION_RATE_LIMITED' || error?.status === 429) return 'rate-limited';
+  if (error?.code === 'INVALID_PAYLOAD') return 'invalid-payload';
+  if (error?.code === 'PROVIDER_NOT_FOUND' || error?.status === 404) return 'empty';
+  return 'unavailable';
+}
+
 const MEDIA_TYPE_LABELS = Object.freeze({
   anime: 'Anime',
   movie: 'Movies',
@@ -154,7 +175,17 @@ function getCardFacts(media) {
   ];
 }
 
-function MediaCard({ media, user, library, onSave, onRequestSignIn }) {
+function ProviderAttributionLink({ provider }) {
+  const providerInfo = PROVIDERS[provider];
+  if (!providerInfo) return <span>{getProviderLabel(provider)}</span>;
+  return (
+    <a href={providerInfo.url} target="_blank" rel="noreferrer">
+      {providerInfo.label}
+    </a>
+  );
+}
+
+function MediaCard({ media, user, library, onSave, onRequestSignIn, onViewDetails }) {
   const [imageFailed, setImageFailed] = useState(false);
   const title = media.title || 'Title unavailable';
   const hasImage = Boolean(media.image) && !imageFailed;
@@ -196,6 +227,15 @@ function MediaCard({ media, user, library, onSave, onRequestSignIn }) {
             </div>
           ))}
         </dl>
+        {onViewDetails && (
+          <button
+            type="button"
+            className="library-action media-card__details-action"
+            onClick={() => onViewDetails(media)}
+          >
+            View details for {title}
+          </button>
+        )}
         <button
           type="button"
           className="library-action"
@@ -336,7 +376,7 @@ function ProviderFailureNotices({ search, isBusy }) {
   );
 }
 
-function MediaGrid({ results, label, user, library, onSave, onRequestSignIn }) {
+function MediaGrid({ results, label, user, library, onSave, onRequestSignIn, onViewDetails }) {
   return (
     <ul className="media-grid" aria-label={`${label} search results`}>
       {results.map((media) => (
@@ -347,6 +387,7 @@ function MediaGrid({ results, label, user, library, onSave, onRequestSignIn }) {
             library={library}
             onSave={onSave}
             onRequestSignIn={onRequestSignIn}
+            onViewDetails={onViewDetails}
           />
         </li>
       ))}
@@ -354,7 +395,7 @@ function MediaGrid({ results, label, user, library, onSave, onRequestSignIn }) {
   );
 }
 
-function CombinedResults({ results, user, library, onSave, onRequestSignIn }) {
+function CombinedResults({ results, user, library, onSave, onRequestSignIn, onViewDetails }) {
   return (
     <div className="combined-results">
       {getCombinedGroups(results).map((group) => {
@@ -372,6 +413,7 @@ function CombinedResults({ results, user, library, onSave, onRequestSignIn }) {
             library={library}
               onSave={onSave}
               onRequestSignIn={onRequestSignIn}
+              onViewDetails={onViewDetails}
             />
           </section>
         );
@@ -380,7 +422,7 @@ function CombinedResults({ results, user, library, onSave, onRequestSignIn }) {
   );
 }
 
-function SearchResults({ search, user, library, onSave, onRequestSignIn }) {
+function SearchResults({ search, user, library, onSave, onRequestSignIn, onViewDetails }) {
   const { state, isBusy, retrySearch, loadMore, retryPage } = search;
   const typeLabel = getMediaTypeLabel(search.type);
   const typeNoun = getMediaTypeNoun(search.type);
@@ -443,6 +485,7 @@ function SearchResults({ search, user, library, onSave, onRequestSignIn }) {
               library={library}
               onSave={onSave}
               onRequestSignIn={onRequestSignIn}
+              onViewDetails={onViewDetails}
             />
           ) : (
             <MediaGrid
@@ -452,6 +495,7 @@ function SearchResults({ search, user, library, onSave, onRequestSignIn }) {
               library={library}
               onSave={onSave}
               onRequestSignIn={onRequestSignIn}
+              onViewDetails={onViewDetails}
             />
           )}
 
@@ -483,9 +527,311 @@ function SearchResults({ search, user, library, onSave, onRequestSignIn }) {
   );
 }
 
+function PublicMediaError({ error, onRetry, resource = 'Media' }) {
+  const kind = getPublicMediaErrorKind(error);
+  const operationName = resource === 'Discovery' ? 'Discovery' : resource.toLowerCase();
+  const copy = {
+    unsupported: {
+      title: 'Operation unsupported.',
+      message: `This ${operationName} operation is not supported by the selected Provider.`
+    },
+    'rate-limited': {
+      title: 'Provider rate-limited.',
+      message: 'The selected Provider is rate-limited.'
+    },
+    'invalid-payload': {
+      title: 'Invalid response.',
+      message: `The ${operationName} response was invalid.`
+    },
+    empty: {
+      title: 'Nothing found.',
+      message: `No ${resource.toLowerCase()} were found for this request.`
+    },
+    unavailable: {
+      title: 'Provider unavailable.',
+      message: `The selected Provider could not return ${operationName.toLowerCase()}.`
+    }
+  }[kind];
+
+  return (
+    <SearchState tone="error" role="alert">
+      <span className="state-mark" aria-hidden="true">!</span>
+      <h3>{copy.title}</h3>
+      <p>{copy.message}</p>
+      <button type="button" className="search-action search-action--secondary" onClick={onRetry}>
+        Retry {resource}
+      </button>
+    </SearchState>
+  );
+}
+
+function DiscoveryControls({ includeAdult, discovery }) {
+  const [type, setType] = useState('anime');
+  const [operation, setOperation] = useState('trending');
+  const [provider, setProvider] = useState('anilist');
+  const typeLabel = getMediaTypeLabel(type);
+  const typeNoun = getMediaTypeNoun(type);
+  const providers = getDiscoveryProviders(type);
+
+  const changeType = (nextType) => {
+    setType(nextType);
+    setProvider(getDiscoveryProviders(nextType)[0] ?? '');
+  };
+
+  return (
+    <div className="discovery-controls">
+      <div className="discovery-controls__heading">
+        <div>
+          <p className="section-index">BROWSE / PROVIDER-OWNED</p>
+          <h3>Follow the signal.</h3>
+        </div>
+        <p>Browse supported Provider lists without changing your Search results.</p>
+      </div>
+      <div className="discovery-controls__fields">
+        <label>
+          Discovery media type
+          <select aria-label="Discovery media type" value={type} onChange={(event) => changeType(event.target.value)}>
+            <option value="anime">Anime catalog</option>
+            <option value="movie">Movies catalog</option>
+            <option value="tv">TV catalog</option>
+            <option value="game">Games catalog</option>
+          </select>
+        </label>
+        <label>
+          Discovery operation
+          <select aria-label="Discovery operation" value={operation} onChange={(event) => setOperation(event.target.value)}>
+            <option value="trending">Trending</option>
+            <option value="popular">Popular</option>
+          </select>
+        </label>
+        <label>
+          Discovery provider
+          <select aria-label="Discovery provider" value={provider} onChange={(event) => setProvider(event.target.value)}>
+            {providers.map((providerName) => <option key={providerName} value={providerName}>{getProviderLabel(providerName)}</option>)}
+          </select>
+        </label>
+        <button
+          type="button"
+          className="search-action search-action--secondary"
+          onClick={() => discovery.load({ operation, type, provider })}
+          disabled={discovery.isBusy}
+        >
+          {discovery.isBusy ? 'Loading Discoveryâ€¦' : `Load ${operation} ${typeNoun}`}
+        </button>
+      </div>
+      <p className="discovery-controls__help">Adult content is {includeAdult ? 'included' : 'excluded'} using the Search preference.</p>
+      <span className="visually-hidden">{typeLabel} Discovery uses the selected Provider without fallback.</span>
+    </div>
+  );
+}
+
+function DiscoveryResults({ discovery, user, library, onSave, onRequestSignIn, onViewDetails }) {
+  const { state } = discovery;
+  const typeLabel = getMediaTypeLabel(state.type);
+  const operationLabel = state.operation === 'popular' ? 'Popular' : 'Trending';
+  const resourceLabel = `${operationLabel} ${typeLabel}`;
+  const statusMessage = state.status === 'initial'
+    ? 'Choose a Provider-owned Discovery list.'
+    : state.status === 'loading'
+      ? `Loading ${resourceLabel.toLowerCase()}.`
+      : state.status === 'error'
+        ? `${resourceLabel} is unavailable.`
+        : state.results.length === 0
+          ? `No ${resourceLabel.toLowerCase()} available.`
+          : `${state.results.length} ${resourceLabel.toLowerCase()} loaded.`;
+
+  return (
+    <section className="discovery-results" role="region" aria-label={`${resourceLabel} discovery`} aria-busy={discovery.isBusy}>
+      <p className="search-announcement" aria-live="polite" aria-atomic="true">{statusMessage}</p>
+      {state.status === 'initial' && (
+        <SearchState>
+          <span className="state-mark" aria-hidden="true">/ / /</span>
+          <h3>Browse a Provider list.</h3>
+          <p>Choose trending or popular to load Provider-owned Discovery results.</p>
+        </SearchState>
+      )}
+      {state.status === 'loading' && <SearchSkeletons />}
+      {state.status === 'error' && <PublicMediaError error={state.error} onRetry={discovery.retry} resource="Discovery" />}
+      {state.status === 'success' && (
+        <>
+          <p className="search-attribution discovery-attribution">
+            <span>UNOFFICIAL </span><ProviderAttributionLink provider={state.source} /><span> INTEGRATION</span>
+          </p>
+          {state.results.length === 0 ? (
+            <SearchState>
+              <span className="state-mark" aria-hidden="true">0</span>
+              <h3>No {resourceLabel} available.</h3>
+              <p>The selected Provider returned an empty Discovery list.</p>
+            </SearchState>
+          ) : (
+            <MediaGrid
+              results={state.results}
+              label={`${resourceLabel} Discovery`}
+              user={user}
+              library={library}
+              onSave={onSave}
+              onRequestSignIn={onRequestSignIn}
+              onViewDetails={onViewDetails}
+            />
+          )}
+          {state.pagination?.hasMore && (
+            <div className="load-more-wrap">
+              <button type="button" className="search-action search-action--primary" onClick={discovery.loadMore} disabled={discovery.isBusy}>
+                {discovery.isBusy ? 'Loading moreâ€¦' : `Load more ${resourceLabel.toLowerCase()}`}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function RecommendationResults({ recommendations, anchor, user, library, onSave, onRequestSignIn, onViewDetails }) {
+  const { state } = recommendations;
+  const statusMessage = state.status === 'idle'
+    ? 'Recommendations are ready to load.'
+    : state.status === 'loading'
+      ? 'Loading Provider-owned Recommendations.'
+      : state.status === 'error'
+        ? 'Recommendations are unavailable.'
+        : state.results.length === 0
+          ? 'No Provider-owned Recommendations found.'
+          : `${state.results.length} Provider-owned Recommendations loaded.`;
+
+  return (
+    <section className="recommendations-panel" role="region" aria-label="Provider-owned recommendations" aria-busy={recommendations.isBusy}>
+      <div className="recommendations-panel__heading">
+        <div>
+          <p className="section-index">RELATED / PROVIDER-OWNED</p>
+          <h3>Recommendations</h3>
+        </div>
+        {state.source && (
+          <p className="search-attribution"><span>UNOFFICIAL </span><ProviderAttributionLink provider={state.source} /><span> INTEGRATION</span></p>
+        )}
+      </div>
+      <p className="search-announcement" aria-live="polite" aria-atomic="true">{statusMessage}</p>
+      {state.status === 'idle' && (
+        <button type="button" className="search-action search-action--secondary" onClick={() => recommendations.load(anchor)}>
+          Load recommendations
+        </button>
+      )}
+      {state.status === 'loading' && <SearchSkeletons />}
+      {state.status === 'error' && <PublicMediaError error={state.error} onRetry={recommendations.retry} resource="Recommendations" />}
+      {state.status === 'success' && state.results.length === 0 && (
+        <SearchState>
+          <span className="state-mark" aria-hidden="true">0</span>
+          <h3>No recommendations found.</h3>
+          <p>The selected Provider returned an empty related-media list.</p>
+        </SearchState>
+      )}
+      {state.status === 'success' && state.results.length > 0 && (
+        <>
+          <MediaGrid
+            results={state.results}
+            label="Recommended media"
+            user={user}
+            library={library}
+            onSave={onSave}
+            onRequestSignIn={onRequestSignIn}
+            onViewDetails={onViewDetails}
+          />
+          {state.pagination?.hasMore && (
+            <div className="load-more-wrap">
+              <button type="button" className="search-action search-action--primary" onClick={recommendations.loadMore} disabled={recommendations.isBusy}>
+                {recommendations.isBusy ? 'Loading moreâ€¦' : 'Load more recommendations'}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function MediaDetailsPanel({ details, recommendations, user, library, onSave, onRequestSignIn, onBack, onViewDetails }) {
+  const panelRef = useRef(null);
+  const selectedMedia = details.selectedMedia;
+  const media = details.media;
+  const title = media?.title ?? selectedMedia?.title ?? 'Selected Media';
+  const statusMessage = details.status === 'loading'
+    ? `Loading details for ${title}.`
+    : details.status === 'error'
+      ? 'Media details are unavailable.'
+      : `${title} details loaded.`;
+
+  useEffect(() => {
+    panelRef.current?.focus();
+  }, [selectedMedia]);
+
+  return (
+    <section ref={panelRef} tabIndex="-1" className="details-panel" role="region" aria-labelledby="media-details-title" aria-busy={details.isBusy}>
+      <div className="details-panel__heading">
+        <div>
+          <p className="section-index">MEDIA / DETAILS</p>
+          <h2 id="media-details-title">{title} details</h2>
+        </div>
+        {selectedMedia?.provider && (
+          <p className="search-attribution"><span>UNOFFICIAL </span><ProviderAttributionLink provider={selectedMedia.provider} /><span> INTEGRATION</span></p>
+        )}
+      </div>
+      <div className="details-panel__actions">
+        <button type="button" className="search-action search-action--secondary" onClick={onBack}>Back to results</button>
+      </div>
+      <p className="search-announcement" aria-live="polite" aria-atomic="true">{statusMessage}</p>
+      {details.status === 'loading' && <SearchSkeletons />}
+      {details.status === 'error' && <PublicMediaError error={details.error} onRetry={details.retry} resource="details" />}
+      {details.status === 'success' && media && (
+        <>
+          <div className="details-media">
+            <MediaCard
+              media={media}
+              user={user}
+              library={library}
+              onSave={onSave}
+              onRequestSignIn={onRequestSignIn}
+            />
+            <div className="details-copy">
+              <h3>Media metadata</h3>
+              <p>{media.description ?? 'Description unavailable.'}</p>
+              <dl className="details-facts">
+                <div><dt>Provider</dt><dd>{getProviderLabel(media.provider)}</dd></div>
+                <div><dt>Genres</dt><dd>{formatMetadataList(media.genres, 'Genres')}</dd></div>
+                <div><dt>Creators</dt><dd>{media.creators?.length ? media.creators.map((creator) => creator.name).join(', ') : 'Creators unavailable'}</dd></div>
+              </dl>
+            </div>
+          </div>
+          <RecommendationResults
+            recommendations={recommendations}
+            anchor={media}
+            user={user}
+            library={library}
+            onSave={onSave}
+            onRequestSignIn={onRequestSignIn}
+            onViewDetails={onViewDetails}
+          />
+        </>
+      )}
+    </section>
+  );
+}
+
 function MediaSearch({ user, library, onSave, onRequestSignIn }) {
   const search = useMediaSearch({ type: 'anime' });
+  const details = useMediaDetails({ includeAdult: search.includeAdult });
+  const discovery = useMediaDiscovery({ includeAdult: search.includeAdult });
+  const recommendations = useMediaRecommendations({ includeAdult: search.includeAdult });
   const typeLabel = getMediaTypeLabel(search.type);
+
+  const openDetails = useCallback((media) => {
+    recommendations.clear();
+    details.open(media);
+  }, [details.open, recommendations.clear]);
+
+  const backToResults = useCallback(() => {
+    recommendations.clear();
+    details.close();
+  }, [details.close, recommendations.clear]);
 
   return (
     <section className="search-section" id="media-search" aria-labelledby="media-search-title">
@@ -547,12 +893,36 @@ function MediaSearch({ user, library, onSave, onRequestSignIn }) {
         </label>
       </form>
 
-      <SearchResults
-        search={search}
+      {details.status === 'idle' ? (
+        <SearchResults
+          search={search}
+          user={user}
+          library={library}
+          onSave={onSave}
+          onRequestSignIn={onRequestSignIn}
+          onViewDetails={openDetails}
+        />
+      ) : (
+        <MediaDetailsPanel
+          details={details}
+          recommendations={recommendations}
+          user={user}
+          library={library}
+          onSave={onSave}
+          onRequestSignIn={onRequestSignIn}
+          onBack={backToResults}
+          onViewDetails={openDetails}
+        />
+      )}
+
+      <DiscoveryControls includeAdult={search.includeAdult} discovery={discovery} />
+      <DiscoveryResults
+        discovery={discovery}
         user={user}
         library={library}
         onSave={onSave}
         onRequestSignIn={onRequestSignIn}
+        onViewDetails={openDetails}
       />
     </section>
   );
