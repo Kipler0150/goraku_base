@@ -28,6 +28,7 @@ import {
   createMediaDiscoveryService,
   MediaDiscoveryCapabilityError
 } from './media-discovery.js';
+import { createMediaMetadataCache } from './media-cache.js';
 import { createLibraryRouter } from './library-http.js';
 import { createTagsCollectionsRouter } from './tags-collections-http.js';
 
@@ -344,9 +345,11 @@ export function createApp({
   thegamesdbAdapter = createTheGamesDBAdapter(),
   rawgAdapter = createRAWGAdapter(),
   mediaDetailsService = null,
-  mediaDiscoveryService = null
+  mediaDiscoveryService = null,
+  mediaMetadataCache = null
 } = {}) {
   const app = express();
+  const cache = mediaMetadataCache ?? createMediaMetadataCache();
   const mediaSearch = createMediaSearchService({ anilistAdapter, myanimelistAdapter, tmdbAdapter, thegamesdbAdapter, rawgAdapter });
   const mediaDetails = mediaDetailsService ?? createMediaDetailsService({
     anilistAdapter,
@@ -362,6 +365,7 @@ export function createApp({
     thegamesdbAdapter,
     rawgAdapter
   });
+  const cachedMediaResponse = (context) => cache.getOrSet(context);
 
   app.disable('x-powered-by');
   app.use('/api', createMutationOriginMiddleware({ appOrigin }));
@@ -386,7 +390,14 @@ export function createApp({
     }
 
     try {
-      const result = await mediaSearch.search(validated);
+      const cacheProvider = validated.provider ?? DEFAULT_DISCOVERY_PROVIDERS[validated.type] ?? 'combined';
+      const result = await cachedMediaResponse({
+        provider: cacheProvider,
+        type: validated.type,
+        operation: 'search',
+        request: validated,
+        load: () => mediaSearch.search(validated)
+      });
       response.status(200).json(result);
     } catch (error) {
       if (error?.validationDetails) {
@@ -411,7 +422,14 @@ export function createApp({
     }
 
     try {
-      const result = await mediaDiscovery[operation](validated);
+      const cacheOperation = operation === 'getTrending' ? 'trending' : 'popular';
+      const result = await cachedMediaResponse({
+        provider: validated.provider,
+        type: validated.type,
+        operation: cacheOperation,
+        request: validated,
+        load: () => mediaDiscovery[operation](validated)
+      });
       response.status(200).json(result);
     } catch (error) {
       discoveryFailureResponse(response, error, validated.provider);
@@ -429,7 +447,13 @@ export function createApp({
     }
 
     try {
-      const result = await mediaDiscovery.getRecommendations(validated);
+      const result = await cachedMediaResponse({
+        provider: validated.provider,
+        type: validated.type,
+        operation: 'recommendations',
+        request: validated,
+        load: () => mediaDiscovery.getRecommendations(validated)
+      });
       response.status(200).json(result);
     } catch (error) {
       discoveryFailureResponse(response, error, validated.provider);
@@ -444,7 +468,13 @@ export function createApp({
     }
 
     try {
-      const result = await mediaDetails.getDetails(validated);
+      const result = await cachedMediaResponse({
+        provider: validated.provider,
+        type: validated.type,
+        operation: 'details',
+        request: validated,
+        load: () => mediaDetails.getDetails(validated)
+      });
       response.status(200).json(result);
     } catch (error) {
       if (error instanceof MediaCapabilityError || error?.code === CAPABILITY_UNSUPPORTED_CODE) {
