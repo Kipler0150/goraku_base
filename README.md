@@ -4,7 +4,7 @@ An entertainment bookmarking and tracking application for anime, movies, televis
 
 ## Project status
 
-Phase 1: complete runnable foundation. Phase 2: complete anime search through Express with unofficial AniList integration and an optional unofficial MyAnimeList availability fallback, plus normalized MediaCards, pagination, loading/error states, and a temporary local adult-content filter. Phase 3: complete movie and TV title search through the server-side TMDB adapter with the same generic search surface, server-only configuration, attribution, and credential-free repository verification. Phase 4: complete TheGamesDB-primary game search with RAWG availability fallback and Combined Search with independent Provider Failures, cursor pagination, server-only configuration, attribution, and deterministic verification. Phase 5: complete local/staging PostgreSQL persistence, local email/password authentication, seven-day server-managed Sessions, secure cookies, mutation Origin validation, authenticated User context, and ownership-scoped Library Item CRUD for Library Status and favorite. Phase 6 tracking slices 1-5 are complete for local/staging use, including User-owned Personal Ratings, Notes, Tags, Collections, media-specific Progress, focused filters, and the authenticated Library editor. The Phase 6 walkthrough and boundary verification remain; Google authentication, account recovery, production rate limiting, and public deployment remain future work.
+Phase 1: complete runnable foundation. Phase 2: complete anime search through Express with unofficial AniList integration and an optional unofficial MyAnimeList availability fallback, plus normalized MediaCards, pagination, loading/error states, and a temporary local adult-content filter. Phase 3: complete movie and TV title search through the server-side TMDB adapter with the same generic search surface, server-only configuration, attribution, and credential-free repository verification. Phase 4: complete TheGamesDB-primary game search with RAWG availability fallback and Combined Search with independent Provider Failures, cursor pagination, server-only configuration, attribution, and deterministic verification. Phase 5: complete local/staging PostgreSQL persistence, local email/password authentication, seven-day server-managed Sessions, secure cookies, mutation Origin validation, authenticated User context, and ownership-scoped Library Item CRUD for Library Status and favorite. Phase 6: complete for local/staging use, including User-owned Personal Ratings, Notes, Tags, Collections, media-specific Progress, focused filters, the authenticated Library editor, dedicated PostgreSQL verification, and the documented client/server boundary. Google authentication, account recovery, production rate limiting, and public deployment remain future work.
 
 ## Portfolio focus
 
@@ -57,15 +57,15 @@ Open <http://localhost:5173>; the container client still calls `/api/health` rel
 
 Compose also starts a persistent PostgreSQL 16 service as `postgres`. Its default local connection is available to the server as `DATABASE_URL`; run `docker compose exec server npm run db:migrate` after the database reports healthy. Native migration runs use the server-only `DATABASE_URL` in `.env.local` (the placeholder is documented in `.env.example` and `server/.env.example`).
 
-PostgreSQL integration tests require the separate `goraku_test` database. Create it with `docker compose exec postgres createdb -U goraku goraku_test`, set `TEST_DATABASE_URL` to its URL, and run `npm run test:integration`. Each suite migrates a unique temporary schema inside that database and drops the schema during teardown; the test refuses other database names and never touches the normal `goraku` database. See the [Phase 5 walkthrough](docs/phase-5-walkthrough.md) for native, Docker, PowerShell, and troubleshooting commands.
+PostgreSQL integration tests require the separate `goraku_test` database. Create it with `docker compose exec postgres createdb -U goraku goraku_test`, set `TEST_DATABASE_URL` to its URL, and run `npm run test:integration`. Each suite migrates a unique temporary schema inside that database and drops the schema during teardown; the test refuses other database names and never touches the normal `goraku` database. See the [Phase 6 walkthrough](docs/phase-6-walkthrough.md) for setup, API examples, tracking flows, verification, and troubleshooting.
 
-Local authentication and the first library slice are available when the server has a migrated `DATABASE_URL`. Use `POST /api/auth/register` or `POST /api/auth/login` with `{ "email": "...", "password": "..." }`; the server sets an HTTP-only `goraku_session` cookie. `GET /api/auth/me` reads the current User from that Session, and `POST /api/auth/logout` revokes only the current Session. Authenticated clients can use `GET|POST /api/library`, `PATCH /api/library/:id`, and `DELETE /api/library/:id` for reference-only Library Items and Phase 6 tracking fields, plus the Tag, Collection, and membership routes documented in the architecture plan. Mutation requests must send the exact configured `APP_ORIGIN` (default `http://localhost:5173`).
+Local authentication and the Library slice are available when the server has a migrated `DATABASE_URL`. Use `POST /api/auth/register` or `POST /api/auth/login` with `{ "email": "...", "password": "..." }`; the server sets an HTTP-only `goraku_session` cookie. `GET /api/auth/me` reads the current User from that Session, and `POST /api/auth/logout` revokes only the current Session. Authenticated clients can use `GET|POST /api/library`, `PATCH /api/library/:id`, and `DELETE /api/library/:id` for reference-only Library Items plus User-owned tracking fields, and the Tag, Collection, and membership routes. Mutation requests must send the exact configured `APP_ORIGIN` (default `http://localhost:5173`). See the [Phase 6 walkthrough](docs/phase-6-walkthrough.md) for request examples and field rules.
 
 For a background verification run, use `docker compose up --build -d`, confirm both services with `docker compose ps`, check `curl.exe http://localhost:3001/api/health` and `curl.exe http://localhost:5173/api/health`, then stop everything with `docker compose down`. Compose is a local development path, not a production deployment recipe.
 
 ## Shared Media contract
 
-`shared/media.js` defines the provider-owned Media shape used by future adapters: provider, string provider ID, media type, normalized titles and metadata, partial release dates, source provider ratings plus their 0–10 display equivalent, release status, and normalized creators. Release status is one of `ANNOUNCED`, `ONGOING`, `RELEASED`, `CANCELLED`, or `UNKNOWN`, and is separate from a user's Library Status.
+`shared/media.js` defines the provider-owned Media shape used by the provider adapters: provider, string provider ID, media type, normalized titles and metadata, partial release dates, source provider ratings plus their 0–10 display equivalent, release status, and normalized creators. Release status is one of `ANNOUNCED`, `ONGOING`, `RELEASED`, `CANCELLED`, or `UNKNOWN`, and is separate from a user's Library Status.
 
 Creator entries use `{ name, role }`; provider adapters are responsible for mapping provider-specific credits to concise, provider-independent role labels without copying raw credit payloads. Type-specific metadata is deliberately small: anime uses episode count and episode duration, movies use runtime, TV uses season and episode counts, and games use platforms, developers, and publishers. Unknown scalar values are `null`; empty lists mean no entries were supplied by the provider and do not prove an exhaustive result. MANGA and COMIC remain reserved Media types, not active integrations.
 
@@ -73,7 +73,7 @@ The contract deliberately excludes user-owned Library Item fields such as person
 
 ## Planned features
 
-Media details, recommendations, additional media types/providers, the Phase 6 walkthrough and boundary artifact, production hardening, and deployment remain future work.
+Media details, recommendations, additional media types/providers, production hardening, and deployment remain future work.
 
 ## Documentation
 
@@ -87,6 +87,9 @@ Media details, recommendations, additional media types/providers, the Phase 6 wa
 - [Phase 4 TheGamesDB, RAWG fallback, and Combined Search specification](.scratch/phase-4-rawg-combined-search/spec.md)
 - [Phase 4 game providers and Combined Search walkthrough](docs/phase-4-walkthrough.md)
 - [Phase 5 PostgreSQL, authentication, and library walkthrough](docs/phase-5-walkthrough.md)
+- [Phase 6 personal tracking specification](.scratch/phase-6-tracking-enrichment/spec.md)
+- [Phase 6 personal tracking walkthrough](docs/phase-6-walkthrough.md)
 - [ADR 0004: local authentication and future external identities](docs/adr/0004-local-auth-and-future-external-identities.md)
+- [ADR 0005: user-owned tracking enrichment](docs/adr/0005-user-owned-tracking-enrichment.md)
 
-Future deployment documentation remains intentionally separate and is not claimed as verified by Phase 5. The implemented authentication and library slice is suitable for local development and controlled staging only.
+Future deployment documentation remains intentionally separate and is not claimed as verified by Phase 6. The implemented authentication and tracking slice is suitable for local development and controlled staging only.

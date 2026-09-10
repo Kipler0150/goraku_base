@@ -31,7 +31,7 @@ Local development uses native npm commands or Docker Compose. The health endpoin
 - The React client exposes the health proof, public media search, local authentication, and an ownership-scoped reference Library.
 - The browser uses a relative API URL; Express owns the API boundary and safe error envelopes.
 - Provider-owned Media, User-owned Library Items, and User-owned tracking data remain separate concepts.
-- Phase 6 tracking slices are implemented for local/staging use; the walkthrough, boundary verification, provider hydration, production hardening, and public deployment remain outside the verified surface.
+- Phase 6 tracking is implemented and verified for local/staging use; provider hydration, production hardening, and public deployment remain outside the verified surface.
 
 ## Brand Commitments
 
@@ -40,8 +40,8 @@ Local development uses native npm commands or Docker Compose. The health endpoin
 
 ## Evidence on Hand
 
-- `CONTEXT.md`, `docs/architecture.md`, and `.scratch/phase-1-foundation/spec.md` provide the approved terminology and scope.
-- No production visual assets, customer evidence, or established visual system exist yet.
+- `CONTEXT.md`, `docs/architecture.md`, the completed Phase 5 walkthrough, and the [Phase 6 specification](.scratch/phase-6-tracking-enrichment/spec.md) provide the approved terminology and scope.
+- The existing React surface establishes a teletext-inspired visual language; no production visual assets or customer research exist.
 
 ## Product Principles
 
@@ -52,4 +52,4 @@ Local development uses native npm commands or Docker Compose. The health endpoin
 
 ## Accessibility & Inclusion
 
-The Phase 1 brief requires semantic HTML, keyboard access, visible focus, responsive behavior, and accessible status announcements for connectivity feedback.
+All current and planned browser surfaces require semantic HTML, keyboard access, visible focus, responsive behavior, reduced-motion support, and accessible status announcements. Phase 6 controls must expose the underlying values behind star and type-specific Progress presentations.

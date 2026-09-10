@@ -13,7 +13,7 @@
     "dev:client": "vite --config client/vite.config.js",
     "start": "node server/index.js",
     "test": "npm run test:server && npm run test:client",
-    "test:server": "node --test test/http.test.js test/media.test.js test/examples.test.js test/anilist.test.js test/myanimelist.test.js test/tmdb.test.js test/rawg.test.js test/thegamesdb.test.js test/media-search.test.js test/environment.test.js test/database.test.js test/auth.test.js test/auth-http.test.js test/library-tracking.test.js test/library-http.test.js test/tags-collections-http.test.js",
+    "test:server": "node --test test/http.test.js test/media.test.js test/examples.test.js test/anilist.test.js test/myanimelist.test.js test/tmdb.test.js test/rawg.test.js test/thegamesdb.test.js test/media-search.test.js test/environment.test.js test/database.test.js test/auth.test.js test/auth-http.test.js test/library-tracking.test.js test/library-http.test.js test/tags-collections-http.test.js test/phase-6-boundary.test.js",
     "test:integration": "node --test test/database.integration.test.js test/auth.integration.test.js test/auth-http.integration.test.js test/library.integration.test.js test/tags-collections.integration.test.js",
     "test:client": "vitest run",
     "examples:inspect": "node scripts/inspect-examples.js",

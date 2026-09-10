@@ -1,20 +1,20 @@
-# Goraku Base foundation surface
+# Goraku Base operating surface
 
 ## Direction
 
-The Phase 1 welcome page uses a broadcast teletext grammar to make a technical foundation feel like a signal that can be read: a fixed-width information rhythm, black field, cyan signal, yellow control accent, and red unavailable state.
+The Goraku Base operating surface uses a broadcast teletext grammar to make discovery and personal tracking feel like a signal that can be read: a fixed-width information rhythm, black field, cyan signal, yellow control accent, and red unavailable state.
 
 ## Composition
 
-- A compact wordmark and two anchor links establish the page as a readable operating surface.
-- The first viewport names the foundation and explains its current proof.
-- The health section makes the request, expected response, and live status visible together.
-- The roadmap section distinguishes queued work from implemented behavior.
+- A compact wordmark and anchor links establish the page as a readable operating surface.
+- The first viewport names the current product surface and its verified local/staging boundary.
+- Search, account, and Library sections make public discovery and private ownership visible together.
+- The Library view is the primary Phase 6 operating surface for editing tracking data, relationships, and focused filters.
 
 ## Interaction and accessibility
 
-Connectivity feedback is an `aria-live` status with explicit loading, connected, and unavailable copy. Retry is a native button, keyboard operable, and only appears when recovery is possible. Focus is visible, a skip link is available, motion is reduced when requested, and the layout collapses to a single-column signal readout below 700px.
+Connectivity and data feedback use accessible status announcements with explicit loading, success, empty, unavailable, and retry copy. Controls are native and keyboard operable, focus is visible, a skip link is available, motion is reduced when requested, and dense Library controls collapse to a single-column layout below 700px. Phase 6 star ratings must retain an accessible numeric value, and type-specific Progress controls must never expose irrelevant fields.
 
 ## Content boundary
 
-The page claims only verified local/staging behavior. Provider metadata remains external, and the completed Phase 6 tracking slices are presented only through the authenticated Library; provider hydration, production hardening, and public deployment remain future work.
+The page claims only verified local/staging behavior. Provider metadata remains external, and the completed Phase 6 tracking surface is presented only through the authenticated Library; provider hydration, production hardening, and public deployment remain future work.

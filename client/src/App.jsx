@@ -1411,7 +1411,7 @@ export default function App() {
 
       <footer className="site-footer" id="credits" aria-labelledby="credits-title">
         <div className="site-footer__identity">
-          <span>GORAKU BASE / PHASE 6.5</span>
+          <span>GORAKU BASE / PHASE 6.6</span>
           <span>ANILIST + MYANIMELIST + TMDB + THEGAMESDB + RAWG / UNOFFICIAL</span>
         </div>
         <div className="tmdb-credits">
