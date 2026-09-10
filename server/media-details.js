@@ -49,7 +49,8 @@ export function createMediaDetailsService({
   myanimelistAdapter,
   tmdbAdapter,
   thegamesdbAdapter,
-  rawgAdapter
+  rawgAdapter,
+  onProviderRequest = () => {}
 }) {
   const adapters = {
     anilist: anilistAdapter,
@@ -75,6 +76,11 @@ export function createMediaDetailsService({
         throw new MediaCapabilityError();
       }
 
+      try {
+        onProviderRequest({ provider, operation: 'details' });
+      } catch {
+        // Observability must never change Provider behavior.
+      }
       const result = await getDetails.call(adapter, { type, providerId, includeAdult });
       const media = normalizeDetailResult(result, { provider, type, providerId });
       if (!includeAdult && media.isAdult === true) {

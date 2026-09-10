@@ -31,6 +31,12 @@ import {
 import { createMediaMetadataCache } from './media-cache.js';
 import { createLibraryRouter } from './library-http.js';
 import { createTagsCollectionsRouter } from './tags-collections-http.js';
+import {
+  createApplicationRateLimiter,
+  readApplicationRateLimitConfig,
+  resolveClientIp
+} from './rate-limit.js';
+import { createRuntimeSignals } from './observability.js';
 
 const NOT_FOUND_ERROR = {
   code: 'NOT_FOUND',
@@ -339,6 +345,11 @@ export function createApp({
   tagsCollectionsRepository = databasePool ? createTagsCollectionsRepository({ pool: databasePool }) : null,
   appOrigin = process.env.APP_ORIGIN ?? DEFAULT_APP_ORIGIN,
   secureCookies = process.env.NODE_ENV === 'production',
+  trustProxy = undefined,
+  rateLimit = {},
+  rateLimiter = null,
+  runtimeSignals = null,
+  onRuntimeEvent = null,
   anilistAdapter = createAniListAdapter(),
   myanimelistAdapter = createMyAnimeListAdapter(),
   tmdbAdapter = createTMDBAdapter(),
@@ -349,25 +360,78 @@ export function createApp({
   mediaMetadataCache = null
 } = {}) {
   const app = express();
-  const cache = mediaMetadataCache ?? createMediaMetadataCache();
-  const mediaSearch = createMediaSearchService({ anilistAdapter, myanimelistAdapter, tmdbAdapter, thegamesdbAdapter, rawgAdapter });
+  const signals = runtimeSignals ?? createRuntimeSignals({ onEvent: onRuntimeEvent ?? undefined });
+  const recordCacheEvent = (...args) => {
+    try {
+      if (typeof signals.recordCacheEvent === 'function') signals.recordCacheEvent(...args);
+    } catch {
+      // Observability must never change request behavior.
+    }
+  };
+  const recordProviderRequest = (...args) => {
+    try {
+      if (typeof signals.recordProviderRequest === 'function') signals.recordProviderRequest(...args);
+    } catch {
+      // Observability must never change Provider behavior.
+    }
+  };
+  const recordRateLimitRejection = typeof signals.recordRateLimitRejection === 'function'
+    ? signals.recordRateLimitRejection.bind(signals)
+    : () => {};
+  const requestMiddleware = typeof signals.requestMiddleware === 'function'
+    ? signals.requestMiddleware.bind(signals)
+    : (_request, _response, next) => next();
+  const configuredTrustProxy = trustProxy === undefined ? readTrustProxy(process.env.TRUST_PROXY) : trustProxy;
+  const configuredRateLimit = {
+    ...readApplicationRateLimitConfig(),
+    ...(rateLimit ?? {})
+  };
+  const applicationRateLimiter = rateLimiter ?? createApplicationRateLimiter({
+    ...configuredRateLimit,
+    resolveKey: configuredRateLimit.resolveKey ?? resolveClientIp,
+    onRejection: recordRateLimitRejection
+  });
+  const mediaDiscoveryWasInjected = mediaDiscoveryService !== null;
+  const mediaDetailsWasInjected = mediaDetailsService !== null;
+  const cache = mediaMetadataCache ?? createMediaMetadataCache({ onEvent: recordCacheEvent });
+  const mediaSearch = createMediaSearchService({
+    anilistAdapter,
+    myanimelistAdapter,
+    tmdbAdapter,
+    thegamesdbAdapter,
+    rawgAdapter,
+    onProviderRequest: recordProviderRequest
+  });
   const mediaDetails = mediaDetailsService ?? createMediaDetailsService({
     anilistAdapter,
     myanimelistAdapter,
     tmdbAdapter,
     thegamesdbAdapter,
-    rawgAdapter
+    rawgAdapter,
+    onProviderRequest: recordProviderRequest
   });
   const mediaDiscovery = mediaDiscoveryService ?? createMediaDiscoveryService({
     anilistAdapter,
     myanimelistAdapter,
     tmdbAdapter,
     thegamesdbAdapter,
-    rawgAdapter
+    rawgAdapter,
+    onProviderRequest: recordProviderRequest
   });
-  const cachedMediaResponse = (context) => cache.getOrSet(context);
+  const cachedMediaResponse = ({ providerRequestFallback = false, ...context }) => cache.getOrSet({
+    ...context,
+    load: providerRequestFallback
+      ? async () => {
+        recordProviderRequest({ provider: context.provider, operation: context.operation });
+        return context.load();
+      }
+      : context.load
+  });
 
   app.disable('x-powered-by');
+  app.set('trust proxy', configuredTrustProxy);
+  app.locals.runtimeSignals = signals;
+  app.locals.applicationRateLimiter = applicationRateLimiter;
   app.use('/api', createMutationOriginMiddleware({ appOrigin }));
   app.use(express.json());
 
@@ -381,6 +445,11 @@ export function createApp({
       service: 'goraku-base-api'
     });
   });
+
+  app.use('/api/media', requestMiddleware);
+  app.use('/api/media', typeof applicationRateLimiter === 'function'
+    ? applicationRateLimiter
+    : applicationRateLimiter.middleware);
 
   app.get('/api/media/search', async (request, response) => {
     const validated = validateMediaSearchQuery(request.query);
@@ -428,6 +497,7 @@ export function createApp({
         type: validated.type,
         operation: cacheOperation,
         request: validated,
+        providerRequestFallback: mediaDiscoveryWasInjected,
         load: () => mediaDiscovery[operation](validated)
       });
       response.status(200).json(result);
@@ -452,6 +522,7 @@ export function createApp({
         type: validated.type,
         operation: 'recommendations',
         request: validated,
+        providerRequestFallback: mediaDiscoveryWasInjected,
         load: () => mediaDiscovery.getRecommendations(validated)
       });
       response.status(200).json(result);
@@ -473,6 +544,7 @@ export function createApp({
         type: validated.type,
         operation: 'details',
         request: validated,
+        providerRequestFallback: mediaDetailsWasInjected,
         load: () => mediaDetails.getDetails(validated)
       });
       response.status(200).json(result);
@@ -531,4 +603,13 @@ export function createApp({
   });
 
   return app;
+}
+
+function readTrustProxy(value) {
+  if (value === undefined || value === '') return false;
+  if (value === true || value === 'true') return true;
+  if (value === false || value === 'false' || value === '0') return false;
+  if (/^\d+$/.test(String(value))) return Number(value);
+  const entries = String(value).split(',').map((entry) => entry.trim()).filter(Boolean);
+  return entries.length > 0 ? entries : false;
 }

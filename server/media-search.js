@@ -88,7 +88,7 @@ function isDisabled(adapter) {
   return adapter?.enabled === false;
 }
 
-async function callProvider(adapter, validated, provider = validated.provider) {
+async function callProvider(adapter, validated, provider = validated.provider, onProviderRequest = () => {}) {
   if (isDisabled(adapter)) throw new ProviderError(PROVIDER_ERROR_CODES.UNAVAILABLE);
   const {
     provider: _provider,
@@ -100,6 +100,11 @@ async function callProvider(adapter, validated, provider = validated.provider) {
   const providerOptions = provider === 'tmdb' ? { type, ...sharedOptions } : sharedOptions;
   const search = adapter?.searchMedia ?? adapter?.searchAnime;
   if (typeof search !== 'function') throw new ProviderError(PROVIDER_ERROR_CODES.UNAVAILABLE);
+  try {
+    onProviderRequest({ provider, operation: 'search' });
+  } catch {
+    // Observability must never change Provider behavior.
+  }
   return search.call(adapter, providerOptions);
 }
 
@@ -221,7 +226,7 @@ function validateCombinedCursor(validated) {
   return state;
 }
 
-async function searchAnimeLane(validated, laneState, adapters) {
+async function searchAnimeLane(validated, laneState, adapters, onProviderRequest) {
   const selectedProvider = validated.retryProvider && laneState.failed
     ? validated.retryProvider
     : laneState.provider;
@@ -230,7 +235,8 @@ async function searchAnimeLane(validated, laneState, adapters) {
       const result = await callProvider(
         adapters.myanimelist,
         { ...validated, type: 'anime', provider: 'myanimelist', page: laneState.nextPage, perPage: 12 },
-        'myanimelist'
+        'myanimelist',
+        onProviderRequest
       );
       return {
         success: true,
@@ -247,7 +253,8 @@ async function searchAnimeLane(validated, laneState, adapters) {
     const result = await callProvider(
       adapters.anilist,
       { ...validated, type: 'anime', provider: 'anilist', page: laneState.nextPage, perPage: 12 },
-      'anilist'
+      'anilist',
+      onProviderRequest
     );
     return {
       success: true,
@@ -264,7 +271,8 @@ async function searchAnimeLane(validated, laneState, adapters) {
       const result = await callProvider(
         adapters.myanimelist,
         { ...validated, type: 'anime', provider: 'myanimelist', page: laneState.nextPage, perPage: 12 },
-        'myanimelist'
+        'myanimelist',
+        onProviderRequest
       );
       return {
         success: true,
@@ -282,7 +290,7 @@ async function searchAnimeLane(validated, laneState, adapters) {
   }
 }
 
-async function searchGameLane(validated, laneState, adapters) {
+async function searchGameLane(validated, laneState, adapters, onProviderRequest) {
   const selectedProvider = validated.retryProvider && laneState.failed
     ? validated.retryProvider
     : laneState.provider;
@@ -291,7 +299,8 @@ async function searchGameLane(validated, laneState, adapters) {
       const result = await callProvider(
         adapters.rawg,
         { ...validated, type: 'game', provider: 'rawg', page: laneState.nextPage, perPage: 20 },
-        'rawg'
+        'rawg',
+        onProviderRequest
       );
       return {
         success: true,
@@ -308,7 +317,8 @@ async function searchGameLane(validated, laneState, adapters) {
     const result = await callProvider(
       adapters.thegamesdb,
       { ...validated, type: 'game', provider: 'thegamesdb', page: laneState.nextPage, perPage: 20 },
-      'thegamesdb'
+      'thegamesdb',
+      onProviderRequest
     );
     return {
       success: true,
@@ -325,7 +335,8 @@ async function searchGameLane(validated, laneState, adapters) {
       const result = await callProvider(
         adapters.rawg,
         { ...validated, type: 'game', provider: 'rawg', page: laneState.nextPage, perPage: 20 },
-        'rawg'
+        'rawg',
+        onProviderRequest
       );
       return {
         success: true,
@@ -343,9 +354,9 @@ async function searchGameLane(validated, laneState, adapters) {
   }
 }
 
-async function searchCombinedLane(type, validated, laneState, adapters) {
-  if (type === 'anime') return searchAnimeLane(validated, laneState, adapters);
-  if (type === 'game') return searchGameLane(validated, laneState, adapters);
+async function searchCombinedLane(type, validated, laneState, adapters, onProviderRequest) {
+  if (type === 'anime') return searchAnimeLane(validated, laneState, adapters, onProviderRequest);
+  if (type === 'game') return searchGameLane(validated, laneState, adapters, onProviderRequest);
 
   const provider = COMBINED_LANE_CONFIG[type].provider;
   try {
@@ -358,7 +369,8 @@ async function searchCombinedLane(type, validated, laneState, adapters) {
         page: laneState.nextPage,
         perPage: COMBINED_LANE_CONFIG[type].perPage
       },
-      provider
+      provider,
+      onProviderRequest
     );
     return {
       success: true,
@@ -435,7 +447,7 @@ function combinedResponse(results, state, page) {
   };
 }
 
-async function searchCombined(validated, adapters) {
+async function searchCombined(validated, adapters, onProviderRequest) {
   const state = validateCombinedCursor(validated);
   if (validated.query.length < MIN_PROVIDER_QUERY_LENGTH && !validated.cursor) {
     for (const type of COMBINED_LANE_TYPES) {
@@ -459,7 +471,7 @@ async function searchCombined(validated, adapters) {
   }
 
   const settled = await Promise.allSettled(
-    laneTypes.map(async (type) => ({ type, outcome: await searchCombinedLane(type, validated, state.lanes[type], adapters) }))
+    laneTypes.map(async (type) => ({ type, outcome: await searchCombinedLane(type, validated, state.lanes[type], adapters, onProviderRequest) }))
   );
   const outcomes = new Map();
   for (const [index, result] of settled.entries()) {
@@ -489,7 +501,14 @@ async function searchCombined(validated, adapters) {
  * Coordinate provider-owned typed pages and independent Combined Search lanes.
  * HTTP status and error-envelope concerns stay in the Express route layer.
  */
-export function createMediaSearchService({ anilistAdapter, myanimelistAdapter, tmdbAdapter, thegamesdbAdapter, rawgAdapter }) {
+export function createMediaSearchService({
+  anilistAdapter,
+  myanimelistAdapter,
+  tmdbAdapter,
+  thegamesdbAdapter,
+  rawgAdapter,
+  onProviderRequest = () => {}
+}) {
   const adapters = {
     anilist: anilistAdapter,
     myanimelist: myanimelistAdapter,
@@ -501,7 +520,7 @@ export function createMediaSearchService({ anilistAdapter, myanimelistAdapter, t
   return {
     async search(validated) {
       const type = validated.type ?? 'anime';
-      if (type === 'all') return searchCombined(validated, adapters);
+      if (type === 'all') return searchCombined(validated, adapters, onProviderRequest);
 
       const defaultProvider = DEFAULT_PROVIDERS[type] ?? 'anilist';
 
@@ -515,7 +534,7 @@ export function createMediaSearchService({ anilistAdapter, myanimelistAdapter, t
       if (type === 'game' && !validated.provider) {
         try {
           return normalizeSearchResponse(
-            await callProvider(adapters.thegamesdb, validated, 'thegamesdb'),
+            await callProvider(adapters.thegamesdb, validated, 'thegamesdb', onProviderRequest),
             'thegamesdb'
           );
         } catch (theGamesDBError) {
@@ -524,7 +543,7 @@ export function createMediaSearchService({ anilistAdapter, myanimelistAdapter, t
           }
           try {
             return normalizeSearchResponse(
-              await callProvider(adapters.rawg, { ...validated, provider: 'rawg' }, 'rawg'),
+              await callProvider(adapters.rawg, { ...validated, provider: 'rawg' }, 'rawg', onProviderRequest),
               'rawg',
               [providerFailureEntry(theGamesDBError, 'thegamesdb')]
             );
@@ -537,7 +556,7 @@ export function createMediaSearchService({ anilistAdapter, myanimelistAdapter, t
       if (type !== 'anime') {
         const provider = validated.provider ?? defaultProvider;
         try {
-          return normalizeSearchResponse(await callProvider(adapters[provider], validated, provider), provider);
+          return normalizeSearchResponse(await callProvider(adapters[provider], validated, provider, onProviderRequest), provider);
         } catch (error) {
           throw Object.assign(error, { provider });
         }
@@ -546,14 +565,14 @@ export function createMediaSearchService({ anilistAdapter, myanimelistAdapter, t
       if (validated.provider) {
         const adapter = adapters[validated.provider];
         try {
-          return normalizeSearchResponse(await callProvider(adapter, validated, validated.provider), validated.provider);
+          return normalizeSearchResponse(await callProvider(adapter, validated, validated.provider, onProviderRequest), validated.provider);
         } catch {
           throw combinedFailure(type);
         }
       }
 
       try {
-        return normalizeSearchResponse(await callProvider(anilistAdapter, validated, 'anilist'), 'anilist');
+        return normalizeSearchResponse(await callProvider(anilistAdapter, validated, 'anilist', onProviderRequest), 'anilist');
       } catch (anilistError) {
         if (!isProviderUnavailable(anilistError) || isDisabled(myanimelistAdapter)) {
           if (isProviderUnavailable(anilistError)) throw combinedFailure(type);
@@ -562,7 +581,7 @@ export function createMediaSearchService({ anilistAdapter, myanimelistAdapter, t
 
         try {
           return normalizeSearchResponse(
-            await callProvider(myanimelistAdapter, { ...validated, provider: 'myanimelist' }, 'myanimelist'),
+            await callProvider(myanimelistAdapter, { ...validated, provider: 'myanimelist' }, 'myanimelist', onProviderRequest),
             'myanimelist',
             [providerFailureEntry(anilistError, 'anilist')]
           );

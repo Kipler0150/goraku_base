@@ -92,7 +92,7 @@ function isValidProviderType(provider, type) {
   return Boolean(PROVIDER_CAPABILITY_MATRIX[provider]?.[type]);
 }
 
-function createListService(adapters, operation) {
+function createListService(adapters, operation, onProviderRequest) {
   return async (options) => {
     const { provider, type, includeAdult = true } = options;
     if (!isValidProviderType(provider, type) || !supportsProviderCapability(provider, type, operation)) {
@@ -104,6 +104,11 @@ function createListService(adapters, operation) {
     const method = adapterMethod(adapter, operation);
     if (!method) throw new MediaDiscoveryCapabilityError();
 
+    try {
+      onProviderRequest({ provider, operation });
+    } catch {
+      // Observability must never change Provider behavior.
+    }
     const result = await method.call(adapter, options);
     return normalizeListResult(result, { provider, type, includeAdult });
   };
@@ -113,7 +118,14 @@ function createListService(adapters, operation) {
  * Coordinate explicit Provider-owned Discovery and Recommendation pages.
  * This service never merges Providers or applies fallback behavior.
  */
-export function createMediaDiscoveryService({ anilistAdapter, myanimelistAdapter, tmdbAdapter, thegamesdbAdapter, rawgAdapter }) {
+export function createMediaDiscoveryService({
+  anilistAdapter,
+  myanimelistAdapter,
+  tmdbAdapter,
+  thegamesdbAdapter,
+  rawgAdapter,
+  onProviderRequest = () => {}
+}) {
   const adapters = {
     anilist: anilistAdapter,
     myanimelist: myanimelistAdapter,
@@ -123,8 +135,8 @@ export function createMediaDiscoveryService({ anilistAdapter, myanimelistAdapter
   };
 
   return {
-    getTrending: createListService(adapters, 'trending'),
-    getPopular: createListService(adapters, 'popular'),
+    getTrending: createListService(adapters, 'trending', onProviderRequest),
+    getPopular: createListService(adapters, 'popular', onProviderRequest),
     async getRecommendations(options) {
       const { provider, type, providerId, includeAdult = true } = options;
       if (!isValidProviderType(provider, type) || !supportsProviderCapability(provider, type, 'recommendations')) {
@@ -139,6 +151,11 @@ export function createMediaDiscoveryService({ anilistAdapter, myanimelistAdapter
       const method = adapterMethod(adapter, 'recommendations');
       if (!method) throw new MediaDiscoveryCapabilityError();
 
+      try {
+        onProviderRequest({ provider, operation: 'recommendations' });
+      } catch {
+        // Observability must never change Provider behavior.
+      }
       const result = await method.call(adapter, options);
       return normalizeListResult(result, { provider, type, includeAdult });
     }
