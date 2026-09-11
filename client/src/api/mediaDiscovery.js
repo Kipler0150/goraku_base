@@ -2,14 +2,14 @@ import { requestJson } from './request.js';
 import { invalidMediaPayload, isValidMediaListPayload } from './mediaPayload.js';
 
 const MEDIA_TYPES = new Set(['anime', 'movie', 'tv', 'game']);
-const DISCOVERY_OPERATIONS = new Set(['trending', 'popular']);
+const DISCOVERY_OPERATIONS = new Set(['trending', 'popular', 'latest']);
 
 function invalidListPayload() {
   return invalidMediaPayload('The API returned an invalid media list payload.');
 }
 
 function validateDiscoveryOptions({ operation, type }) {
-  if (!DISCOVERY_OPERATIONS.has(operation)) throw new TypeError('operation must be trending or popular.');
+  if (!DISCOVERY_OPERATIONS.has(operation)) throw new TypeError('operation must be trending, popular, or latest.');
   if (!MEDIA_TYPES.has(type)) throw new TypeError('type must be anime, movie, tv, or game.');
 }
 
@@ -65,3 +65,4 @@ export const fetchMediaDiscovery = getMediaDiscovery;
 export const fetchMediaRecommendations = getMediaRecommendations;
 export const getTrendingMedia = (options = {}) => getMediaDiscovery({ ...options, operation: 'trending' });
 export const getPopularMedia = (options = {}) => getMediaDiscovery({ ...options, operation: 'popular' });
+export const getLatestMedia = (options = {}) => getMediaDiscovery({ ...options, operation: 'latest' });

@@ -2,6 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App.jsx';
+import { selectView } from './test-navigation.js';
 
 function response(payload) {
   return { ok: true, json: async () => payload };
@@ -75,6 +76,7 @@ describe('functional Discovery surfaces', () => {
       return Promise.resolve(response(list([])));
     });
     render(<App />);
+    selectView('Search');
 
     fireEvent.change(screen.getByRole('combobox', { name: 'Search media type' }), { target: { value: 'movie' } });
     const movieQuery = screen.getByRole('searchbox', { name: 'Search movies by title' });
@@ -82,6 +84,10 @@ describe('functional Discovery surfaces', () => {
     fireEvent.submit(movieQuery.closest('form'));
 
     expect(await screen.findByRole('heading', { name: 'Fight Club' })).toBeInTheDocument();
+    expect(screen.queryByText('View details', { exact: true })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Save to library' }));
+    expect(screen.getByText('Sign in to save this reference to your library.')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Fight Club details' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'View details for Fight Club' }));
 
     expect(await screen.findByRole('heading', { name: 'Fight Club details' })).toBeInTheDocument();
@@ -89,6 +95,7 @@ describe('functional Discovery surfaces', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Back to results' }));
 
     expect(screen.getByRole('heading', { name: 'Fight Club' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'View details for Fight Club' })).toHaveFocus();
     expect(screen.queryByRole('heading', { name: 'Fight Club details' })).not.toBeInTheDocument();
   });
 
@@ -104,6 +111,7 @@ describe('functional Discovery surfaces', () => {
       return Promise.resolve(response(list([])));
     });
     render(<App />);
+    selectView('Search');
 
     fireEvent.change(screen.getByRole('combobox', { name: 'Search media type' }), { target: { value: 'movie' } });
     const query = screen.getByRole('searchbox', { name: 'Search movies by title' });
@@ -129,6 +137,7 @@ describe('functional Discovery surfaces', () => {
       return Promise.resolve(response(list([])));
     });
     render(<App />);
+    selectView('Search');
 
     fireEvent.change(screen.getByRole('combobox', { name: 'Search media type' }), { target: { value: 'movie' } });
     const query = screen.getByRole('searchbox', { name: 'Search movies by title' });
@@ -149,17 +158,13 @@ describe('functional Discovery surfaces', () => {
     fetch.mockImplementation((url) => {
       if (url === '/api/health') return Promise.resolve(health());
       if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
-      if (url.includes('/api/media/popular')) return Promise.resolve(response(list([], 'tmdb')));
+      if (url.includes('/api/media/popular') || url.includes('/api/media/trending') || url.includes('/api/media/latest')) return Promise.resolve(response(list([], 'tmdb')));
       return Promise.resolve(response(list([media()])));
     });
     render(<App />);
 
-    fireEvent.change(screen.getByRole('combobox', { name: 'Discovery media type' }), { target: { value: 'movie' } });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Discovery operation' }), { target: { value: 'popular' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Load popular movies' }));
-
-    const discovery = await screen.findByRole('region', { name: 'Popular Movies discovery' });
-    expect(discovery).toHaveTextContent('No Popular Movies available.');
+    expect(await screen.findByText('No Popular now Movies available.')).toBeInTheDocument();
+    const discovery = screen.getByRole('region', { name: 'Popular now Movies shelf' });
     expect(within(discovery).getByRole('link', { name: 'TMDB' })).toHaveAttribute('href', 'https://www.themoviedb.org/');
   });
 
@@ -168,7 +173,7 @@ describe('functional Discovery surfaces', () => {
     fetch.mockImplementation((url) => {
       if (url === '/api/health') return Promise.resolve(health());
       if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
-      if (url.includes('/api/media/popular')) {
+      if (url.includes('/api/media/popular?type=game')) {
         discoveryCall += 1;
         return Promise.resolve(discoveryCall === 1
           ? { ok: false, status: 501, json: async () => ({ error: { code: 'CAPABILITY_UNSUPPORTED', message: 'This Provider does not support the requested operation.', details: [] } }) }
@@ -179,10 +184,8 @@ describe('functional Discovery surfaces', () => {
     render(<App />);
 
     fireEvent.change(screen.getByRole('combobox', { name: 'Discovery media type' }), { target: { value: 'game' } });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Discovery operation' }), { target: { value: 'popular' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Load popular games' }));
-    expect(await screen.findByText('This Discovery operation is not supported by the selected Provider.')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Retry Discovery' }));
+    expect(await screen.findByText('This popular now operation is not supported by the selected Provider.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry Popular now' }));
     expect(await screen.findByText('The selected Provider is rate-limited.')).toBeInTheDocument();
   });
 
@@ -190,7 +193,7 @@ describe('functional Discovery surfaces', () => {
     fetch.mockImplementation((url) => {
       if (url === '/api/health') return Promise.resolve(health());
       if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
-      if (url.includes('/api/media/popular')) {
+      if (url.includes('/api/media/popular?type=movie')) {
         return Promise.resolve({
           ok: false,
           status: 429,
@@ -201,10 +204,6 @@ describe('functional Discovery surfaces', () => {
     });
     render(<App />);
 
-    fireEvent.change(screen.getByRole('combobox', { name: 'Discovery media type' }), { target: { value: 'movie' } });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Discovery operation' }), { target: { value: 'popular' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Load popular movies' }));
-
     expect(await screen.findByText('The application is rate-limited. Please retry later.')).toBeInTheDocument();
   });
 
@@ -212,7 +211,7 @@ describe('functional Discovery surfaces', () => {
     fetch.mockImplementation((url) => {
       if (url === '/api/health') return Promise.resolve(health());
       if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
-      if (url.includes('/api/media/popular')) {
+      if (url.includes('/api/media/popular?type=movie')) {
         return Promise.resolve({
           ok: false,
           status: 503,
@@ -223,12 +222,8 @@ describe('functional Discovery surfaces', () => {
     });
     render(<App />);
 
-    fireEvent.change(screen.getByRole('combobox', { name: 'Discovery media type' }), { target: { value: 'movie' } });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Discovery operation' }), { target: { value: 'popular' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Load popular movies' }));
-
-    expect(await screen.findByText('The selected Provider could not return discovery.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Retry Discovery' })).toBeInTheDocument();
+    expect(await screen.findByText('The selected Provider could not return popular now.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry Popular now' })).toBeInTheDocument();
   });
 
   it('shows an invalid details response as a retryable client state', async () => {
@@ -245,6 +240,7 @@ describe('functional Discovery surfaces', () => {
       return Promise.resolve(response(list([])));
     });
     render(<App />);
+    selectView('Search');
 
     fireEvent.change(screen.getByRole('combobox', { name: 'Search media type' }), { target: { value: 'movie' } });
     const query = screen.getByRole('searchbox', { name: 'Search movies by title' });

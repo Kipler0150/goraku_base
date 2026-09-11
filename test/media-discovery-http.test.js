@@ -59,6 +59,11 @@ function createDiscoveryAdapter({ result = { results: [movie], pagination: { pag
       if (error) throw error;
       return result;
     },
+    async getLatest(options) {
+      calls.push({ operation: 'latest', options });
+      if (error) throw error;
+      return result;
+    },
     async getRecommendations(options) {
       calls.push({ operation: 'recommendations', options });
       if (error) throw error;
@@ -91,6 +96,19 @@ describe('media discovery HTTP API', () => {
     assert.deepEqual(anilist.calls, [{
       operation: 'trending',
       options: { type: 'anime', provider: 'anilist', page: 2, perPage: 12, includeAdult: false }
+    }]);
+  });
+
+  it('returns an attributed latest page through the explicit Provider capability', async () => {
+    const tmdb = createDiscoveryAdapter({ result: { results: [movie], pagination: { page: 1, perPage: 12, hasMore: false } } });
+    const response = await request(createApp({ tmdbAdapter: tmdb }))
+      .get('/api/media/latest?type=movie&provider=tmdb&includeAdult=false');
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.source, 'tmdb');
+    assert.deepEqual(tmdb.calls, [{
+      operation: 'latest',
+      options: { provider: 'tmdb', type: 'movie', page: 1, perPage: 12, includeAdult: false }
     }]);
   });
 

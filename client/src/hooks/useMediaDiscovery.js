@@ -24,6 +24,7 @@ export function useMediaDiscovery({ includeAdult = true } = {}) {
   const [state, setState] = useState(INITIAL_STATE);
   const requestRef = useRef(null);
   const latestOptionsRef = useRef(null);
+  const appendRef = useRef(false);
   const includeAdultRef = useRef(includeAdult);
 
   const cancel = useCallback(() => {
@@ -35,6 +36,7 @@ export function useMediaDiscovery({ includeAdult = true } = {}) {
     cancel();
     const requestOptions = { ...options, includeAdult, page: options.page ?? 1 };
     latestOptionsRef.current = requestOptions;
+    appendRef.current = append;
     const controller = new AbortController();
     const request = { controller };
     requestRef.current = request;
@@ -81,12 +83,12 @@ export function useMediaDiscovery({ includeAdult = true } = {}) {
   const load = useCallback((options) => run(options), [run]);
 
   const retry = useCallback(() => {
-    if (latestOptionsRef.current) run(latestOptionsRef.current);
+    if (latestOptionsRef.current) run(latestOptionsRef.current, { append: appendRef.current });
   }, [run]);
 
   const loadMore = useCallback(() => {
     const options = latestOptionsRef.current;
-    if (!options || !state.pagination?.hasMore || state.loadingPage) return;
+    if (requestRef.current || !options || !state.pagination?.hasMore || state.loadingPage) return;
     run({ ...options, page: state.pagination.page + 1 }, { append: true });
   }, [run, state.loadingPage, state.pagination]);
 
@@ -94,7 +96,7 @@ export function useMediaDiscovery({ includeAdult = true } = {}) {
   useEffect(() => {
     if (includeAdultRef.current === includeAdult) return;
     includeAdultRef.current = includeAdult;
-    if (latestOptionsRef.current) run(latestOptionsRef.current);
+    if (latestOptionsRef.current) run({ ...latestOptionsRef.current, page: 1 });
   }, [includeAdult, run]);
 
   return {

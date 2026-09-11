@@ -15,18 +15,19 @@ describe('provider capability matrix', () => {
       'details',
       'trending',
       'popular',
+      'latest',
       'recommendations'
     ]);
 
     const expected = {
-      anilist: { anime: { search: true, details: true, trending: true, popular: true, recommendations: true } },
-      myanimelist: { anime: { search: true, details: true, trending: false, popular: true, recommendations: true } },
+      anilist: { anime: { search: true, details: true, trending: true, popular: true, latest: true, recommendations: true } },
+      myanimelist: { anime: { search: true, details: true, trending: false, popular: true, latest: false, recommendations: true } },
       tmdb: {
-        movie: { search: true, details: true, trending: true, popular: true, recommendations: true },
-        tv: { search: true, details: true, trending: true, popular: true, recommendations: true }
+        movie: { search: true, details: true, trending: true, popular: true, latest: true, recommendations: true },
+        tv: { search: true, details: true, trending: true, popular: true, latest: true, recommendations: true }
       },
-      thegamesdb: { game: { search: true, details: true, trending: false, popular: false, recommendations: false } },
-      rawg: { game: { search: true, details: true, trending: false, popular: true, recommendations: true } }
+      thegamesdb: { game: { search: true, details: true, trending: false, popular: false, latest: false, recommendations: false } },
+      rawg: { game: { search: true, details: true, trending: false, popular: true, latest: true, recommendations: true } }
     };
 
     assert.deepEqual(PROVIDER_CAPABILITY_MATRIX, expected);
@@ -38,6 +39,7 @@ describe('provider capability matrix', () => {
       details: true,
       trending: true,
       popular: true,
+      latest: true,
       recommendations: true
     });
     assert.equal(supportsProviderCapability('tmdb', 'movie', 'details'), true);

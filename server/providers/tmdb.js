@@ -397,6 +397,27 @@ export function createTMDBAdapter({
       });
       return normalizePayload(payload, options.type, normalizedImageBaseUrl, includeAdult);
     },
+    async getLatest({ type = 'movie', page = 1, perPage = 12, includeAdult = true } = {}) {
+      const options = validateDiscoveryOptions({ type, page, perPage, includeAdult });
+      if (!normalizedToken) throw providerError(PROVIDER_ERROR_CODES.UNAVAILABLE);
+      const latestPath = options.type === 'movie' ? 'movie/now_playing' : 'tv/on_the_air';
+      const url = new URL(`${normalizedDetailsEndpoint}/${latestPath}`);
+      url.searchParams.set('page', String(page));
+      url.searchParams.set('include_adult', String(includeAdult));
+      url.searchParams.set('language', 'en-US');
+      const payload = await requestProviderJson({
+        request,
+        url,
+        timeoutMs,
+        options: {
+          method: 'GET',
+          headers: { accept: 'application/json', Authorization: `Bearer ${normalizedToken}` }
+        },
+        invalidResponse,
+        errorForStatus: (status) => errorForStatus(status, true)
+      });
+      return normalizePayload(payload, options.type, normalizedImageBaseUrl, includeAdult);
+    },
     async getRecommendations({ type = 'movie', providerId, page = 1, perPage = 12, includeAdult = true } = {}) {
       const options = validateDiscoveryOptions({ type, page, perPage, includeAdult });
       if (typeof providerId !== 'string' || !/^[1-9]\d*$/.test(providerId.trim())) throw invalidResponse();
@@ -423,6 +444,9 @@ export function createTMDBAdapter({
     },
     getPopularMedia(options) {
       return this.getPopular(options);
+    },
+    getLatestMedia(options) {
+      return this.getLatest(options);
     },
     getMediaRecommendations(options) {
       return this.getRecommendations(options);

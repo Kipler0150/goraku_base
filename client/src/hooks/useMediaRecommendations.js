@@ -39,7 +39,7 @@ export function useMediaRecommendations({ includeAdult = true } = {}) {
       perPage: 12,
       includeAdult
     };
-    latestOptionsRef.current = { anchor, options };
+    latestOptionsRef.current = { anchor, options: { ...options, append } };
     const controller = new AbortController();
     const request = { controller };
     requestRef.current = request;
@@ -76,7 +76,7 @@ export function useMediaRecommendations({ includeAdult = true } = {}) {
   }, [run]);
   const loadMore = useCallback(() => {
     const latest = latestOptionsRef.current;
-    if (!latest || !state.pagination?.hasMore || state.loadingPage) return;
+    if (requestRef.current || !latest || !state.pagination?.hasMore || state.loadingPage) return;
     run(latest.anchor, { page: state.pagination.page + 1, append: true });
   }, [run, state.loadingPage, state.pagination]);
   const clear = useCallback(() => {

@@ -56,6 +56,7 @@ describe('Provider discovery adapters', () => {
 
     const trending = await adapter.getTrending({ page: 2, perPage: 3, includeAdult: false });
     const popular = await adapter.getPopular({ page: 1, perPage: 3, includeAdult: true });
+    const latest = await adapter.getLatest({ page: 1, perPage: 3, includeAdult: true });
 
     assert.equal(trending.results[0].provider, 'anilist');
     assert.deepEqual(trending.pagination, { page: 2, perPage: 3, hasMore: false });
@@ -66,7 +67,9 @@ describe('Provider discovery adapters', () => {
       sort: ['TRENDING_DESC']
     });
     assert.deepEqual(JSON.parse(requests[1].options.body).variables.sort, ['POPULARITY_DESC']);
+    assert.deepEqual(JSON.parse(requests[2].options.body).variables.sort, ['START_DATE_DESC']);
     assert.equal(popular.results.length, 1);
+    assert.equal(latest.results.length, 1);
   });
 
   it('normalizes AniList Provider-owned recommendations and preserves empty pages', async () => {
@@ -137,7 +140,7 @@ describe('Provider discovery adapters', () => {
     assert.equal(requests[0].options.headers['X-MAL-CLIENT-ID'], 'fixture-client-id');
   });
 
-  it('maps TMDB trending, popular, and recommendation list endpoints', async () => {
+  it('maps TMDB trending, popular, latest, and recommendation list endpoints', async () => {
     const requests = [];
     const adapter = createTMDBAdapter({
       accessToken: 'fixture-access-token',
@@ -163,13 +166,15 @@ describe('Provider discovery adapters', () => {
 
     await adapter.getTrending({ type: 'movie', page: 1, perPage: 12, includeAdult: false });
     await adapter.getPopular({ type: 'movie', page: 1, perPage: 12, includeAdult: false });
+    await adapter.getLatest({ type: 'movie', page: 1, perPage: 12, includeAdult: false });
     await adapter.getRecommendations({ type: 'movie', providerId: '550', page: 1, perPage: 12, includeAdult: false });
 
     assert.equal(new URL(requests[0].url).pathname, '/3/trending/movie/week');
     assert.equal(new URL(requests[1].url).pathname, '/3/movie/popular');
     assert.equal(new URL(requests[1].url).searchParams.get('include_adult'), 'false');
-    assert.equal(new URL(requests[2].url).pathname, '/3/movie/550/recommendations');
-    assert.equal(requests[2].options.headers.Authorization, 'Bearer fixture-access-token');
+    assert.equal(new URL(requests[2].url).pathname, '/3/movie/now_playing');
+    assert.equal(new URL(requests[3].url).pathname, '/3/movie/550/recommendations');
+    assert.equal(requests[3].options.headers.Authorization, 'Bearer fixture-access-token');
   });
 
   it('maps RAWG popular and Provider-owned suggested games', async () => {
@@ -183,12 +188,15 @@ describe('Provider discovery adapters', () => {
     });
 
     const popular = await adapter.getPopular({ page: 3, perPage: 5, includeAdult: false });
+    const latest = await adapter.getLatest({ page: 2, perPage: 5, includeAdult: false });
     const recommendations = await adapter.getRecommendations({ providerId: '3498', page: 1, perPage: 5, includeAdult: false });
 
     assert.equal(new URL(requests[0].url).pathname, '/api/games');
     assert.equal(new URL(requests[0].url).searchParams.get('ordering'), '-added');
-    assert.equal(new URL(requests[1].url).pathname, '/api/games/3498/suggested');
+    assert.equal(new URL(requests[1].url).searchParams.get('ordering'), '-released');
+    assert.equal(new URL(requests[2].url).pathname, '/api/games/3498/suggested');
     assert.equal(popular.results[0].metadata.platforms[0], 'PC');
+    assert.equal(latest.results[0].provider, 'rawg');
     assert.equal(recommendations.results[0].providerId, '3498');
   });
 

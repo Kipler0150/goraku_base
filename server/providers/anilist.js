@@ -496,6 +496,25 @@ export function createAniListAdapter({
       });
       return normalizePayload(payload, includeAdult);
     },
+    async getLatest({ page = 1, perPage = 12, includeAdult = true } = {}) {
+      const options = validateDiscoveryOptions({ page, perPage, includeAdult });
+      const payload = await requestProviderJson({
+        request,
+        url: endpoint,
+        timeoutMs,
+        options: {
+          method: 'POST',
+          headers: { accept: 'application/json', 'content-type': 'application/json' },
+          body: JSON.stringify({
+            query: DISCOVERY_GRAPHQL_QUERY,
+            variables: { ...options, sort: ['START_DATE_DESC'] }
+          })
+        },
+        invalidResponse,
+        errorForStatus: (status) => errorForStatus(status, true)
+      });
+      return normalizePayload(payload, includeAdult);
+    },
     async getRecommendations({ providerId, page = 1, perPage = 12, includeAdult = true } = {}) {
       const options = validateDiscoveryOptions({ page, perPage, includeAdult });
       if (typeof providerId !== 'string' || !/^[1-9]\d*$/.test(providerId.trim())) throw invalidResponse();
@@ -521,6 +540,9 @@ export function createAniListAdapter({
     },
     getPopularMedia(options) {
       return this.getPopular(options);
+    },
+    getLatestMedia(options) {
+      return this.getLatest(options);
     },
     getMediaRecommendations(options) {
       return this.getRecommendations(options);

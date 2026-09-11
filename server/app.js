@@ -491,7 +491,7 @@ export function createApp({
     }
 
     try {
-      const cacheOperation = operation === 'getTrending' ? 'trending' : 'popular';
+      const cacheOperation = operation.replace(/^get/, '').toLowerCase();
       const result = await cachedMediaResponse({
         provider: validated.provider,
         type: validated.type,
@@ -508,6 +508,7 @@ export function createApp({
 
   app.get('/api/media/trending', (request, response) => handleDiscoveryRequest('getTrending', request, response));
   app.get('/api/media/popular', (request, response) => handleDiscoveryRequest('getPopular', request, response));
+  app.get('/api/media/latest', (request, response) => handleDiscoveryRequest('getLatest', request, response));
 
   app.get('/api/media/:provider/:type/:id/recommendations', async (request, response) => {
     const validated = validateMediaDetailsRequest(request.params, request.query, { includePagination: true });

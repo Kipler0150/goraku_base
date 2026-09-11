@@ -3,10 +3,12 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App.jsx';
+import { selectView } from './test-navigation.js';
 
 describe('welcome page connectivity feedback', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn());
+    window.localStorage.clear();
   });
 
   afterEach(() => {
@@ -21,6 +23,7 @@ describe('welcome page connectivity feedback', () => {
     });
 
     render(<App />);
+    selectView('About & status');
 
     expect(screen.getByRole('status')).toHaveTextContent('Checking backend connection');
     expect(await screen.findByRole('status')).toHaveTextContent('Backend connected');
@@ -31,6 +34,7 @@ describe('welcome page connectivity feedback', () => {
     fetch.mockResolvedValue({ ok: true, json: async () => ({ status: 'ok', service: 'wrong-service' }) });
 
     render(<App />);
+    selectView('About & status');
 
     expect(await screen.findByRole('status')).toHaveTextContent('Backend unavailable');
     expect(screen.getByRole('button', { name: 'Retry connection' })).toBeInTheDocument();
@@ -40,6 +44,7 @@ describe('welcome page connectivity feedback', () => {
     fetch.mockResolvedValue({ ok: false, status: 503, json: async () => ({ status: 'ok' }) });
 
     render(<App />);
+    selectView('About & status');
 
     expect(await screen.findByRole('status')).toHaveTextContent('Backend unavailable');
   });
@@ -59,6 +64,7 @@ describe('welcome page connectivity feedback', () => {
     const user = userEvent.setup();
 
     render(<App />);
+    selectView('About & status');
 
     const retryButton = await screen.findByRole('button', { name: 'Retry connection' });
     retryButton.focus();
@@ -70,6 +76,7 @@ describe('welcome page connectivity feedback', () => {
 
   it('shows TMDB credits with the approved logo and required disclaimer', () => {
     render(<App />);
+    selectView('About & status');
 
     const logo = screen.getByRole('img', { name: 'TMDB' });
     expect(logo).toHaveAttribute('src', 'https://www.themoviedb.org/assets/2/v4/logos/primary-green.svg');
@@ -77,5 +84,18 @@ describe('welcome page connectivity feedback', () => {
     expect(screen.getByRole('contentinfo')).toHaveTextContent(
       'This product uses the TMDB API but is not endorsed or certified by TMDB.'
     );
+  });
+
+  it('switches themes and persists the selected presentation mode', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    selectView('About & status');
+
+    expect(document.documentElement).toHaveAttribute('data-theme', 'dark');
+    await user.click(screen.getByRole('button', { name: 'Switch to light mode' }));
+
+    expect(document.documentElement).toHaveAttribute('data-theme', 'light');
+    expect(window.localStorage.getItem('goraku-base-theme')).toBe('light');
+    expect(screen.getByRole('button', { name: 'Switch to dark mode' })).toBeInTheDocument();
   });
 });

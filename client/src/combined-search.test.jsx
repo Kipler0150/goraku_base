@@ -2,6 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App.jsx';
+import { selectView } from './test-navigation.js';
 
 function healthResponse() {
   return { ok: true, json: async () => ({ status: 'ok', service: 'goraku-base-api' }) };
@@ -91,6 +92,7 @@ describe('Games and Combined Search experience', () => {
     fetch.mockImplementation((url) => {
       if (url === '/api/health') return Promise.resolve(healthResponse());
       if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
+      if (url.includes('/api/media/thegamesdb/game/1')) return Promise.resolve(searchResponse(gameMedia('1', 'Unknown Game', { platforms: [], developers: [], publishers: [] }, 'thegamesdb')));
       return Promise.resolve(searchResponse({
         results: [gameMedia('1', 'Unknown Game', { platforms: [], developers: [], publishers: [] }, 'thegamesdb')],
         source: 'thegamesdb',
@@ -99,6 +101,7 @@ describe('Games and Combined Search experience', () => {
       }));
     });
     render(<App />);
+    selectView('Search');
 
     const selector = screen.getByRole('combobox', { name: 'Search media type' });
     expect(screen.getByRole('option', { name: 'Games' })).toBeInTheDocument();
@@ -111,6 +114,9 @@ describe('Games and Combined Search experience', () => {
     fireEvent.submit(input.closest('form'));
 
     expect(await screen.findByRole('heading', { name: 'Unknown Game' })).toBeInTheDocument();
+    expect(screen.queryByText('Platforms unavailable')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'View details for Unknown Game' }));
+    await screen.findByRole('heading', { name: 'Unknown Game details' });
     expect(screen.getByText('Platforms unavailable')).toBeInTheDocument();
     expect(screen.getByText('Developers unavailable')).toBeInTheDocument();
     expect(screen.getByText('Publishers unavailable')).toBeInTheDocument();
@@ -136,6 +142,7 @@ describe('Games and Combined Search experience', () => {
       })));
     });
     render(<App />);
+    selectView('Search');
 
     fireEvent.change(screen.getByRole('combobox', { name: 'Search media type' }), { target: { value: 'all' } });
     const input = screen.getByRole('searchbox', { name: 'Search all media by title' });
@@ -169,6 +176,7 @@ describe('Games and Combined Search experience', () => {
       })));
     });
     render(<App />);
+    selectView('Search');
 
     fireEvent.change(screen.getByRole('combobox', { name: 'Search media type' }), { target: { value: 'all' } });
     const input = screen.getByRole('searchbox', { name: 'Search all media by title' });
@@ -223,6 +231,7 @@ describe('Games and Combined Search experience', () => {
       })));
     });
     render(<App />);
+    selectView('Search');
 
     fireEvent.change(screen.getByRole('combobox', { name: 'Search media type' }), { target: { value: 'all' } });
     const input = screen.getByRole('searchbox', { name: 'Search all media by title' });
@@ -269,6 +278,7 @@ describe('Games and Combined Search experience', () => {
       })));
     });
     render(<App />);
+    selectView('Search');
 
     fireEvent.change(screen.getByRole('combobox', { name: 'Search media type' }), { target: { value: 'all' } });
     const input = screen.getByRole('searchbox', { name: 'Search all media by title' });

@@ -2,6 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App.jsx';
+import { selectView, openTracking } from './test-navigation.js';
 
 const USER = { id: 'user-1', email: 'reader@example.com' };
 const LIBRARY_ID = '00000000-0000-4000-8000-000000000001';
@@ -88,6 +89,7 @@ describe('authentication and library experience', () => {
       return Promise.resolve(response(searchPayload([])));
     });
     render(<App />);
+    selectView('Account');
 
     fireEvent.click(screen.getByRole('button', { name: 'Register', exact: true }));
     const form = document.querySelector('.auth-form');
@@ -116,8 +118,10 @@ describe('authentication and library experience', () => {
       return Promise.resolve(response(searchPayload([])));
     }));
     render(<App />);
+    selectView('Account');
 
     expect(await screen.findByText(USER.email)).toBeInTheDocument();
+    selectView('My Library');
     expect(await screen.findByRole('heading', { name: 'Loading your library.' })).toBeInTheDocument();
     resolveLibrary(response({ results: [], pagination: { page: 1, perPage: 20, hasMore: false } }));
     expect(await screen.findByRole('heading', { name: 'Your library is clear.' })).toBeInTheDocument();
@@ -129,6 +133,8 @@ describe('authentication and library experience', () => {
       ? Promise.resolve(response({ status: 'ok', service: 'goraku-base-api' }))
       : Promise.resolve(response(searchPayload())));
     render(<App />);
+    selectView('Account');
+    selectView('Search');
     const input = screen.getByRole('searchbox', { name: 'Search anime by title' });
     fireEvent.change(input, { target: { value: 'arrival' } });
     fireEvent.submit(input.closest('form'));
@@ -157,6 +163,7 @@ describe('authentication and library experience', () => {
       return Promise.resolve(response(searchPayload([])));
     }));
     render(<App />);
+    selectView('Account');
 
     const authForm = document.querySelector('.auth-form');
     fireEvent.change(within(authForm).getByLabelText('Email'), { target: { value: USER.email } });
@@ -164,6 +171,7 @@ describe('authentication and library experience', () => {
     fireEvent.submit(authForm);
 
     expect(await screen.findByText('42')).toBeInTheDocument();
+    selectView('Search');
     const input = screen.getByRole('searchbox', { name: 'Search anime by title' });
     fireEvent.change(input, { target: { value: 'arrival' } });
     fireEvent.submit(input.closest('form'));
@@ -173,6 +181,8 @@ describe('authentication and library experience', () => {
     expect(await screen.findByRole('button', { name: 'Saved to library' })).toBeInTheDocument();
     expect(fetch.mock.calls.some(([url, options]) => url === '/api/library' && options?.method === 'POST' && options.body.includes('"providerId":"43"'))).toBe(true);
 
+    selectView('My Library');
+    openTracking();
     const existingStatus = screen.getByLabelText('Library status for TMDB movie 42');
     fireEvent.change(existingStatus, { target: { value: 'COMPLETED' } });
     await waitFor(() => expect(existingStatus).toHaveValue('COMPLETED'));
@@ -194,12 +204,14 @@ describe('authentication and library experience', () => {
       return Promise.resolve(response(searchPayload([])));
     }));
     render(<App />);
+    selectView('Account');
 
     const authForm = document.querySelector('.auth-form');
     fireEvent.change(within(authForm).getByLabelText('Email'), { target: { value: USER.email } });
     fireEvent.change(within(authForm).getByLabelText('Password'), { target: { value: 'correct horse!' } });
     fireEvent.submit(authForm);
 
+    selectView('My Library');
     expect(await screen.findByRole('heading', { name: 'The library signal did not come through.' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retry library' })).toBeInTheDocument();
   });

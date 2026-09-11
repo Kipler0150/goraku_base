@@ -277,6 +277,24 @@ export function createRAWGAdapter({
       });
       return normalizePayload(payload, page, perPage, options.includeAdult);
     },
+    async getLatest({ page = 1, perPage = RAWG_PAGE_SIZE, includeAdult = true } = {}) {
+      const options = validateDiscoveryOptions({ page, perPage, includeAdult });
+      if (!normalizedKey) throw providerError(PROVIDER_ERROR_CODES.UNAVAILABLE);
+      const url = new URL(endpoint);
+      url.searchParams.set('key', normalizedKey);
+      url.searchParams.set('ordering', '-released');
+      url.searchParams.set('page', String(page));
+      url.searchParams.set('page_size', String(perPage));
+      const payload = await requestProviderJson({
+        request,
+        url,
+        timeoutMs,
+        options: { method: 'GET', headers: { accept: 'application/json' } },
+        invalidResponse,
+        errorForStatus: (status) => errorForStatus(status)
+      });
+      return normalizePayload(payload, page, perPage, options.includeAdult);
+    },
     async getRecommendations({ providerId, page = 1, perPage = RAWG_PAGE_SIZE, includeAdult = true } = {}) {
       const options = validateDiscoveryOptions({ page, perPage, includeAdult });
       if (typeof providerId !== 'string' || !/^[1-9]\d*$/.test(providerId.trim())) throw invalidResponse();
@@ -297,6 +315,9 @@ export function createRAWGAdapter({
     },
     getPopularMedia(options) {
       return this.getPopular(options);
+    },
+    getLatestMedia(options) {
+      return this.getLatest(options);
     },
     getMediaRecommendations(options) {
       return this.getRecommendations(options);

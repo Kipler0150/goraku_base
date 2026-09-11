@@ -10,25 +10,26 @@ export const MEDIA_OPERATIONS = Object.freeze([
   'details',
   'trending',
   'popular',
+  'latest',
   'recommendations'
 ]);
 
 const capabilities = {
   anilist: {
-    anime: { search: true, details: true, trending: true, popular: true, recommendations: true }
+    anime: { search: true, details: true, trending: true, popular: true, latest: true, recommendations: true }
   },
   myanimelist: {
-    anime: { search: true, details: true, trending: false, popular: true, recommendations: true }
+    anime: { search: true, details: true, trending: false, popular: true, latest: false, recommendations: true }
   },
   tmdb: {
-    movie: { search: true, details: true, trending: true, popular: true, recommendations: true },
-    tv: { search: true, details: true, trending: true, popular: true, recommendations: true }
+    movie: { search: true, details: true, trending: true, popular: true, latest: true, recommendations: true },
+    tv: { search: true, details: true, trending: true, popular: true, latest: true, recommendations: true }
   },
   thegamesdb: {
-    game: { search: true, details: true, trending: false, popular: false, recommendations: false }
+    game: { search: true, details: true, trending: false, popular: false, latest: false, recommendations: false }
   },
   rawg: {
-    game: { search: true, details: true, trending: false, popular: true, recommendations: true }
+    game: { search: true, details: true, trending: false, popular: true, latest: true, recommendations: true }
   }
 };
 

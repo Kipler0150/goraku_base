@@ -2,6 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App.jsx';
+import { selectView, openTracking } from './test-navigation.js';
 
 const USER = { id: 'user-1', email: 'reader@example.com' };
 const IDS = {
@@ -113,7 +114,10 @@ describe('authenticated Library tracking UI', () => {
   it('renders type-specific Progress editors and confirms rating, Note, and Progress updates', async () => {
     const fetchMock = installBaseFetch({ libraryItems: [MOVIE, ANIME, TV, GAME] });
     render(<App />);
+    selectView('My Library');
 
+    await screen.findByRole('heading', { name: '42' });
+    openTracking();
     expect(await screen.findByLabelText('Episodes watched')).toBeInTheDocument();
     expect(screen.getByLabelText('Season')).toBeInTheDocument();
     expect(screen.getByLabelText('Episode')).toBeInTheDocument();
@@ -178,7 +182,11 @@ describe('authenticated Library tracking UI', () => {
       }
     });
     render(<App />);
+    selectView('My Library');
 
+    fireEvent.click(await screen.findByText('Organize Tags & Collections'));
+    await screen.findByRole('heading', { name: '42' });
+    openTracking();
     const tagInput = await screen.findByLabelText('Create Tag');
     fireEvent.change(tagInput, { target: { value: 'Favorites' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create Tag' }));
@@ -216,7 +224,9 @@ describe('authenticated Library tracking UI', () => {
       }
     });
     render(<App />);
+    selectView('My Library');
 
+    fireEvent.click(await screen.findByText('Organize Tags & Collections'));
     expect(await screen.findByDisplayValue('First tag')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Load more Tags' }));
     expect(await screen.findByDisplayValue('Second tag')).toBeInTheDocument();
@@ -240,6 +250,7 @@ describe('authenticated Library tracking UI', () => {
         : { ok: true, status: 204, json: async () => null }
     });
     render(<App />);
+    selectView('My Library');
 
     await screen.findByRole('heading', { name: '42' });
     await screen.findByRole('option', { name: 'Favorites' });
@@ -254,6 +265,8 @@ describe('authenticated Library tracking UI', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(`/api/library?page=2&perPage=20&libraryStatus=completed&favorite=true&tagId=${tag.id}&collectionId=${collection.id}`, expect.anything()));
     expect(await screen.findByRole('heading', { name: '43' })).toBeInTheDocument();
 
+    fireEvent.click(await screen.findByText('Organize Tags & Collections'));
+    openTracking();
     const tagInput = screen.getByLabelText('Create Tag');
     fireEvent.change(tagInput, { target: { value: 'Favorites' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create Tag' }));
@@ -268,7 +281,10 @@ describe('authenticated Library tracking UI', () => {
       })
     });
     render(<App />);
+    selectView('My Library');
 
+    await screen.findByRole('heading', { name: '42' });
+    openTracking();
     const status = await screen.findByLabelText('Library status for TMDB movie 42');
     const favorite = screen.getByRole('checkbox', { name: 'Favorite TMDB movie 42' });
     fireEvent.change(status, { target: { value: 'COMPLETED' } });
@@ -285,9 +301,11 @@ describe('authenticated Library tracking UI', () => {
       taxonomyListResponse: (kind) => response({ error: { code: 'UNAVAILABLE', message: `${kind} storage is unavailable.`, details: [] } }, 503)
     });
     render(<App />);
+    selectView('My Library');
 
     expect(await screen.findByText('The library signal did not come through.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retry library' })).toBeInTheDocument();
+    fireEvent.click(await screen.findByText('Organize Tags & Collections'));
     expect(await screen.findByText('Relationships did not come through.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retry Tags and Collections' })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalled();
@@ -298,6 +316,9 @@ describe('authenticated Library tracking UI', () => {
       libraryPatchResponse: () => response({ error: { code: 'CONFLICT', message: 'Library item changed elsewhere.', details: [] } }, 409)
     });
     render(<App />);
+    selectView('My Library');
+    await screen.findByRole('heading', { name: '42' });
+    openTracking();
     const status = await screen.findByLabelText('Library status for TMDB movie 42');
     fireEvent.change(status, { target: { value: 'COMPLETED' } });
     expect(await screen.findAllByText('Library item changed elsewhere.')).not.toHaveLength(0);
@@ -324,7 +345,9 @@ describe('authenticated Library tracking UI', () => {
       libraryCreateResponse: () => response({ error: { code: 'CONFLICT', message: 'This Library Item already exists.', details: [] } }, 409)
     });
     render(<App />);
+    selectView('My Library');
 
+    selectView('Search');
     const search = await screen.findByRole('searchbox', { name: 'Search anime by title' });
     fireEvent.change(search, { target: { value: 'already saved' } });
     fireEvent.submit(search.closest('form'));
@@ -339,10 +362,12 @@ describe('authenticated Library tracking UI', () => {
       : Promise.resolve(response({ error: { code: 'UNAUTHENTICATED', message: 'Authentication required.', details: [] } }, 401)));
     vi.stubGlobal('fetch', fetchMock);
     render(<App />);
+    selectView('My Library');
 
     expect(await screen.findByText('Sign in to see your library.')).toBeInTheDocument();
     expect(screen.queryByText('Filter the signal.')).not.toBeInTheDocument();
     expect(screen.queryByText('Shape your signal.')).not.toBeInTheDocument();
+    selectView('Search');
     expect(screen.getByRole('searchbox', { name: 'Search anime by title' })).toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => url === '/api/tags' || url === '/api/collections')).toBe(false);
   });

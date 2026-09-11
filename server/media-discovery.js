@@ -83,6 +83,7 @@ function adapterMethod(adapter, operation) {
   const names = {
     trending: ['getTrending', 'getTrendingMedia'],
     popular: ['getPopular', 'getPopularMedia'],
+    latest: ['getLatest', 'getLatestMedia'],
     recommendations: ['getRecommendations', 'getMediaRecommendations']
   }[operation];
   return names.map((name) => adapter?.[name]).find((method) => typeof method === 'function');
@@ -137,6 +138,7 @@ export function createMediaDiscoveryService({
   return {
     getTrending: createListService(adapters, 'trending', onProviderRequest),
     getPopular: createListService(adapters, 'popular', onProviderRequest),
+    getLatest: createListService(adapters, 'latest', onProviderRequest),
     async getRecommendations(options) {
       const { provider, type, providerId, includeAdult = true } = options;
       if (!isValidProviderType(provider, type) || !supportsProviderCapability(provider, type, 'recommendations')) {

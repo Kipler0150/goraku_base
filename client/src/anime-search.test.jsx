@@ -1,8 +1,9 @@
 import '@testing-library/jest-dom/vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App.jsx';
+import { selectView } from './test-navigation.js';
 
 function media(id, title) {
   return {
@@ -96,6 +97,7 @@ describe('anime search experience', () => {
       return Promise.resolve(searchResponse(searchPayload([media('1', 'Naruto')])))
     });
     render(<App />);
+    selectView('Search');
     const input = screen.getByRole('searchbox', { name: 'Search anime by title' });
     const searchCalls = () => fetch.mock.calls.filter(([url]) => url.startsWith('/api/media/search'));
 
@@ -116,11 +118,10 @@ describe('anime search experience', () => {
       await Promise.resolve();
     });
     expect(screen.getByRole('heading', { name: 'Naruto' })).toBeInTheDocument();
-    expect(screen.getByText('0.0 / 10')).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: '0.0 out of 10' })).toBeInTheDocument();
     expect(screen.getByText('2024')).toBeInTheDocument();
-    expect(screen.getByText('Ongoing')).toBeInTheDocument();
-    expect(screen.getByText('12 Episodes')).toBeInTheDocument();
-    expect(screen.getByText('24 Minutes')).toBeInTheDocument();
+    expect(screen.queryByText('12 Episodes')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'View details for Naruto' })).toBeInTheDocument();
     expect(screen.getByText('Cover unavailable')).toBeInTheDocument();
   });
 
@@ -131,6 +132,7 @@ describe('anime search experience', () => {
       return Promise.resolve(searchResponse(searchPayload([media('1', 'Naruto')])));
     });
     render(<App />);
+    selectView('Search');
     const input = screen.getByRole('searchbox', { name: 'Search anime by title' });
     fireEvent.change(input, { target: { value: 'cowboy' } });
     input.focus();
@@ -151,9 +153,10 @@ describe('anime search experience', () => {
   it('exposes labelled status and keyboard-reachable search controls', async () => {
     const user = userEvent.setup();
     render(<App />);
+    selectView('Search');
 
     const input = screen.getByRole('searchbox', { name: 'Search anime by title' });
-    const searchButton = screen.getByRole('button', { name: 'Search' });
+    const searchButton = within(input.closest('form')).getByRole('button', { name: 'Search' });
     const adultCheckbox = screen.getByRole('checkbox', { name: 'Include adult content' });
     const results = screen.getByRole('region', { name: 'Anime search results' });
 
@@ -184,6 +187,7 @@ describe('anime search experience', () => {
     });
     vi.useFakeTimers();
     render(<App />);
+    selectView('Search');
     const input = screen.getByRole('searchbox', { name: 'Search anime by title' });
 
     fireEvent.change(input, { target: { value: 'old' } });
@@ -222,6 +226,7 @@ describe('anime search experience', () => {
       return Promise.resolve(searchResponse(searchPayload([media('2', 'Second result')], 2, false)));
     });
     render(<App />);
+    selectView('Search');
     const input = screen.getByRole('searchbox', { name: 'Search anime by title' });
     fireEvent.change(input, { target: { value: 'series' } });
     fireEvent.submit(input.closest('form'));
@@ -247,6 +252,7 @@ describe('anime search experience', () => {
       return Promise.resolve(searchResponse(searchPayload([])));
     });
     render(<App />);
+    selectView('Search');
     const input = screen.getByRole('searchbox', { name: 'Search anime by title' });
     fireEvent.change(input, { target: { value: 'missing' } });
     fireEvent.submit(input.closest('form'));
@@ -263,6 +269,7 @@ describe('anime search experience', () => {
       return Promise.resolve(searchResponse(searchPayload([])));
     });
     render(<App />);
+    selectView('Search');
     const input = screen.getByRole('searchbox', { name: 'Search anime by title' });
     fireEvent.change(input, { target: { value: '2e' } });
     fireEvent.submit(input.closest('form'));
@@ -283,6 +290,7 @@ describe('anime search experience', () => {
       ], 1, false, type === 'movie' ? 'tmdb' : 'anilist')));
     });
     render(<App />);
+    selectView('Search');
     const input = screen.getByRole('searchbox', { name: 'Search anime by title' });
     const typeSelector = screen.getByRole('combobox', { name: 'Search media type' });
 
@@ -301,10 +309,18 @@ describe('anime search experience', () => {
     expect(fetch.mock.calls.at(-1)[0]).toContain('provider=tmdb');
   });
 
-  it('renders movie runtime and TV season and episode placeholders from the shared card', async () => {
+  it('keeps runtime and episode facts in details instead of the compact cards', async () => {
     fetch.mockImplementation((url) => {
       if (url === '/api/health') return Promise.resolve(healthResponse());
       if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
+      if (url.includes('/api/media/tmdb/')) {
+        const [, type, id] = new URL(url, 'http://localhost').pathname.split('/').slice(3);
+        return Promise.resolve(searchResponse(typedMedia({
+          id, title: type === 'tv' ? 'Severance' : id === '10' ? 'Arrival' : 'Arrival: Unknown',
+          type: type.toUpperCase(),
+          metadata: type === 'tv' ? { seasonCount: null, episodeCount: null } : { runtimeMinutes: id === '10' ? 116 : null }
+        })));
+      }
       const params = new URL(url, 'http://localhost').searchParams;
       const type = params.get('type');
       return Promise.resolve(searchResponse(searchPayload([
@@ -315,16 +331,26 @@ describe('anime search experience', () => {
       ], 1, false, 'tmdb')));
     });
     render(<App />);
+    selectView('Search');
     const input = screen.getByRole('searchbox', { name: 'Search anime by title' });
     fireEvent.change(input, { target: { value: 'arrival' } });
     fireEvent.submit(input.closest('form'));
 
     expect(await screen.findByRole('heading', { name: 'Arrival' })).toBeInTheDocument();
+    expect(screen.queryByText('116 Minutes')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'View details for Arrival', exact: true }));
+    await screen.findByRole('heading', { name: 'Arrival details' });
     expect(screen.getByText('116 Minutes')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Back to results' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View details for Arrival: Unknown' }));
+    await screen.findByRole('heading', { name: 'Arrival: Unknown details' });
     expect(screen.getByText('Runtime unavailable')).toBeInTheDocument();
 
+    fireEvent.click(screen.getByRole('button', { name: 'Back to results' }));
     fireEvent.change(screen.getByRole('combobox', { name: 'Search media type' }), { target: { value: 'tv' } });
     expect(await screen.findByRole('heading', { name: 'Severance' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'View details for Severance' }));
+    await screen.findByRole('heading', { name: 'Severance details' });
     expect(screen.getByText('Seasons unavailable')).toBeInTheDocument();
     expect(screen.getByText('Episodes unavailable')).toBeInTheDocument();
     expect(screen.getByText('UNOFFICIAL TMDB INTEGRATION')).toBeInTheDocument();
@@ -344,6 +370,7 @@ describe('anime search experience', () => {
       });
     });
     render(<App />);
+    selectView('Search');
     const input = screen.getByRole('searchbox', { name: 'Search anime by title' });
     fireEvent.change(input, { target: { value: 'signal' } });
     fireEvent.submit(input.closest('form'));
@@ -389,6 +416,7 @@ describe('anime search experience', () => {
       ], 2, false, 'tmdb')));
     });
     render(<App />);
+    selectView('Search');
 
     const typeSelector = screen.getByRole('combobox', { name: 'Search media type' });
     fireEvent.change(typeSelector, { target: { value: 'tv' } });
@@ -404,7 +432,7 @@ describe('anime search experience', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry page 2' }));
 
     expect(await screen.findByRole('heading', { name: 'TV result two' })).toBeInTheDocument();
-    expect(screen.getByText('2 Seasons')).toBeInTheDocument();
-    expect(screen.getByText('19 Episodes')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Severance' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Load more TV results for severance' })).not.toBeInTheDocument();
   });
 });

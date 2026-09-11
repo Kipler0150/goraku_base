@@ -65,6 +65,12 @@ _Avoid_: Global search, unified ranking
 
 **Discovery**: A Provider-owned way to find or browse Media, including search and supported trending or popular lists; it does not imply a User's Library or a global ranking.
 
+**Discovery Shelf**: A named, Provider-owned list in the Discover workspace, such as Popular now, Trending this week, or Latest releases. Each shelf has its own loading, empty, unsupported, failure, pagination, and attribution state.
+
+**Latest Releases**: A Discovery Shelf containing Media selected by a Provider's genuine release-date-oriented capability. Latest Releases are not inferred by renaming Popular or by applying a client-side sort to an unrelated Provider list.
+
+**Discover Workspace**: The public catalog-browsing surface composed of a selected Media type, one explicit source, a featured item when available, and independent Discovery Shelves. It is distinct from Search, Provider-owned Recommendations, and a User's Library.
+
 **Provider-owned Recommendation**: A Provider-returned list of Media related to an anchor Media entry. It is not personalized from a User's Library and does not promise cross-Provider ranking or identity matching.
 
 **Media Metadata Cache**: A bounded, temporary store of Provider-owned Media responses used to reduce repeated retrieval. It never contains User-owned Library Items, tracking fields, Tags, Collections, or Sessions.
