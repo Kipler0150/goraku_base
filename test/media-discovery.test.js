@@ -109,12 +109,18 @@ describe('Provider discovery adapters', () => {
       clientId: 'fixture-client-id',
       request: async (url, options) => {
         requests.push({ url, options });
-        if (new URL(url).pathname.endsWith('/recommendations')) {
-          return response({ data: [{ node: {
+        if (new URL(url).pathname === '/v2/anime/1') {
+          return response({
             id: 1,
-            title: 'Cowboy Bebop',
-            main_picture: { medium: 'https://img.example/anime.jpg' }
-          } }], paging: {} });
+            recommendations: [{
+              node: {
+                id: 2,
+                title: 'Samurai Champloo',
+                main_picture: { medium: 'https://img.example/recommendation.jpg' }
+              },
+              num_recommendations: 10
+            }]
+          });
         }
         return response({ data: [{ node: {
           id: 1,
@@ -136,7 +142,9 @@ describe('Provider discovery adapters', () => {
     assert.equal(new URL(requests[0].url).searchParams.get('ranking_type'), 'bypopularity');
     assert.equal(new URL(requests[0].url).searchParams.get('offset'), '4');
     assert.equal(popular.results[0].provider, 'myanimelist');
-    assert.equal(recommendations.results[0].providerId, '1');
+    assert.equal(new URL(requests[1].url).pathname, '/v2/anime/1');
+    assert.equal(new URL(requests[1].url).searchParams.get('fields'), 'recommendations');
+    assert.equal(recommendations.results[0].providerId, '2');
     assert.equal(requests[0].options.headers['X-MAL-CLIENT-ID'], 'fixture-client-id');
   });
 

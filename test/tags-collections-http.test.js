@@ -5,8 +5,8 @@ import { createApp } from '../server/app.js';
 import { LibraryConflictError } from '../server/library.js';
 
 const APP_ORIGIN = 'http://localhost:5173';
-const USER = { id: 'user-1', email: 'user@example.com' };
-const OTHER_USER = { id: 'user-2', email: 'other@example.com' };
+const USER = { id: 'user-1', username: 'reader', email: 'user@example.com' };
+const OTHER_USER = { id: 'user-2', username: 'other_reader', email: 'other@example.com' };
 const SESSION_COOKIE = 'goraku_session=tracking-session';
 const OTHER_SESSION_COOKIE = 'goraku_session=other-session';
 const ITEM_ID = '00000000-0000-4000-8000-000000000001';

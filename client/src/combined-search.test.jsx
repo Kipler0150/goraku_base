@@ -120,7 +120,7 @@ describe('Games and Combined Search experience', () => {
     expect(screen.getByText('Platforms unavailable')).toBeInTheDocument();
     expect(screen.getByText('Developers unavailable')).toBeInTheDocument();
     expect(screen.getByText('Publishers unavailable')).toBeInTheDocument();
-    expect(screen.getAllByRole('link', { name: /TheGamesDB/i }).every((link) => link.getAttribute('href') === 'https://thegamesdb.net/')).toBe(true);
+    expect(screen.getByText('TheGamesDB', { exact: true })).toBeInTheDocument();
   });
 
   it('groups Combined Search results and keeps successful lanes visible after a safe provider failure', async () => {
@@ -157,36 +157,7 @@ describe('Games and Combined Search experience', () => {
     expect(screen.getByRole('button', { name: 'Retry RAWG search' })).toBeInTheDocument();
     expect(screen.queryByText('RAWG rate limit reached.')).not.toBeInTheDocument();
 
-    const attribution = document.querySelector('.search-attribution');
-    expect(attribution).toHaveTextContent('UNOFFICIAL ANILIST / TMDB / RAWG INTEGRATIONS');
-    expect(within(attribution).getByRole('link', { name: 'ANILIST' })).toHaveAttribute('href', 'https://anilist.co/');
-    expect(within(attribution).getByRole('link', { name: 'TMDB' })).toHaveAttribute('href', 'https://www.themoviedb.org/');
-    expect(within(attribution).getByRole('link', { name: 'RAWG' })).toHaveAttribute('href', 'https://rawg.io/');
-    expect(screen.getAllByRole('link', { name: 'RAWG' }).every((link) => link.getAttribute('href') === 'https://rawg.io/')).toBe(true);
-  });
-
-  it('attributes Combined Search results sourced from TheGamesDB', async () => {
-    fetch.mockImplementation((url) => {
-      if (url === '/api/health') return Promise.resolve(healthResponse());
-      if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
-      return Promise.resolve(searchResponse(combinedPayload([
-        gameMedia('tgdb-1', 'TheGamesDB game', { platforms: ['PC'], developers: [], publishers: [] }, 'thegamesdb')
-      ], {
-        providers: { thegamesdb: { page: 1, perPage: 20, hasMore: false } }
-      })));
-    });
-    render(<App />);
-    selectView('Search');
-
-    fireEvent.change(screen.getByRole('combobox', { name: 'Search media type' }), { target: { value: 'all' } });
-    const input = screen.getByRole('searchbox', { name: 'Search all media by title' });
-    fireEvent.change(input, { target: { value: 'zelda' } });
-    fireEvent.submit(input.closest('form'));
-
-    expect(await screen.findByRole('heading', { name: 'Games' })).toBeInTheDocument();
-    const attribution = document.querySelector('.search-attribution');
-    expect(attribution).toHaveTextContent('UNOFFICIAL THEGAMESDB INTEGRATION');
-    expect(within(attribution).getByRole('link', { name: 'UNOFFICIAL THEGAMESDB INTEGRATION' })).toHaveAttribute('href', 'https://thegamesdb.net/');
+    expect(document.querySelector('.search-attribution')).toBeNull();
   });
 
   it('uses the opaque Combined cursor and retries only a failed provider without duplicates', async () => {

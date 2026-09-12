@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { isValidMediaSearchPayload, searchMedia } from './mediaSearch.js';
+import { getMediaFilterOptions, isValidMediaFilterOptionsPayload, isValidMediaSearchPayload, searchMedia } from './mediaSearch.js';
 
 describe('typed media search API', () => {
   afterEach(() => vi.restoreAllMocks());
@@ -108,6 +108,43 @@ describe('typed media search API', () => {
 
     expect(fetch).toHaveBeenCalledWith(
       '/api/media/search?type=all&q=zelda&page=2&perPage=12&includeAdult=false&cursor=opaque-cursor&retryProvider=rawg',
+      expect.objectContaining({ headers: { Accept: 'application/json' } })
+    );
+  });
+
+  it('serializes selected filters and validates dynamic filter options', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        results: [],
+        source: 'tmdb',
+        pagination: { page: 1, perPage: 20, hasMore: false },
+        providerErrors: []
+      })
+    }));
+
+    await searchMedia({
+      type: 'movie',
+      filters: { genres: ['18', '878'], creator: { id: '42', label: 'A Creator' }, minRating: 8 }
+    });
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/media/search?type=movie&page=1&perPage=12&includeAdult=true&genres=18%7C878&creator=42&minRating=8',
+      expect.objectContaining({ headers: { Accept: 'application/json' } })
+    );
+
+    const options = {
+      type: 'movie',
+      source: 'tmdb',
+      genres: [{ id: '18', label: 'Drama' }],
+      creators: [{ id: '42', label: 'A Creator' }],
+      rating: { field: 'minRating', label: 'Minimum Provider Rating', max: 10, step: 0.5 }
+    };
+    expect(isValidMediaFilterOptionsPayload(options)).toBe(true);
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => options }));
+    await expect(getMediaFilterOptions({ type: 'movie', creatorQuery: 'creator' })).resolves.toEqual(options);
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/media/filter-options?type=movie&includeAdult=true&creatorQuery=creator',
       expect.objectContaining({ headers: { Accept: 'application/json' } })
     );
   });

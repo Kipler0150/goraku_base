@@ -421,14 +421,14 @@ describe('Media Metadata Cache HTTP integration', () => {
     const cache = createMediaMetadataCache();
     const app = createApp({
       mediaMetadataCache: cache,
-      anilistAdapter: {
+      myanimelistAdapter: {
         enabled: true,
         async searchAnime() {
           primaryCalls += 1;
           throw new ProviderError(PROVIDER_ERROR_CODES.UNAVAILABLE);
         }
       },
-      myanimelistAdapter: {
+      anilistAdapter: {
         enabled: true,
         async searchAnime() {
           fallbackCalls += 1;
@@ -442,8 +442,8 @@ describe('Media Metadata Cache HTTP integration', () => {
 
     assert.equal(first.status, 200);
     assert.equal(second.status, 200);
-    assert.equal(first.body.source, 'myanimelist');
-    assert.equal(second.body.source, 'myanimelist');
+    assert.equal(first.body.source, 'anilist');
+    assert.equal(second.body.source, 'anilist');
     assert.equal(primaryCalls, 1);
     assert.equal(fallbackCalls, 1);
   });

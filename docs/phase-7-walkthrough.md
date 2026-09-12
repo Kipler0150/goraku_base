@@ -3,7 +3,7 @@
 Status: complete
 Completion: complete
 
-This walkthrough covers the completed Phase 7 local-development and controlled-staging slice. It is not a production-readiness claim. Phase 7 extends the public Provider-owned Media surface and bounds repeated traffic; Phase 8 separately refines the presentation of those surfaces.
+This walkthrough covers the completed Phase 7 local-development and controlled-staging slice. It is not a production-readiness claim. Phase 7 extends the public Provider-owned Media surface and bounds repeated traffic; the completed Phase 8 follow-up records the presentation and account-identity refinements.
 
 ## Outcome
 
@@ -32,10 +32,10 @@ Authenticated Library -> User-owned tracking
                        |
                        +-> no Provider hydration during Library operations
 
-Phase 8 -> presentation refinement of the functional surfaces above
+Phase 8 -> completed presentation refinement of the functional surfaces above
 ~~~
 
-Phase 7 preserves the Phase 6 separation between Provider-owned Media and User-owned Library Items. The Library never becomes dependent on Provider availability. Phase 8 may improve visual hierarchy, layout, typography, interaction flow, responsive presentation, and motion without changing the Phase 7 contracts.
+Phase 7 preserves the Phase 6 separation between Provider-owned Media and User-owned Library Items. The Library never becomes dependent on Provider availability. Phase 8 improved visual hierarchy, layout, typography, interaction flow, responsive presentation, and motion without changing those boundaries.
 
 ## Prerequisites
 
@@ -80,7 +80,7 @@ The Provider Capability matrix is the source of truth. It must identify whether 
 
 An unsupported capability is different from a successful empty result. The API returns 501 CAPABILITY_UNSUPPORTED for the former and a normal 200 list with no results for the latter. Temporary Provider, credential, timeout, malformed-response, and rate-limit failures retain the existing safe Provider Failure behavior.
 
-Provider selection is explicit for details and Recommendations. Discovery may use a type's primary Provider when omitted, but it never silently switches Providers. Existing search fallback behavior remains unchanged.
+Provider selection is explicit for details and Recommendations. Discovery uses the type's primary Provider when omitted; server-selected Anime requests fall back from MyAnimeList to AniList only when MyAnimeList is unavailable. Anime search uses the same MyAnimeList-primary/AniList availability fallback; Anime Discovery uses MyAnimeList's popularity, airing, and current-season endpoints. All explicit Discovery, details, and Recommendation Provider selections remain strict.
 
 ## API walkthrough
 
@@ -99,7 +99,7 @@ curl.exe -i "http://localhost:3001/api/media/tmdb/movie/550/recommendations?page
 Fetch a supported Discovery list:
 
 ~~~powershell
-curl.exe -i "http://localhost:3001/api/media/trending?type=anime&provider=anilist&page=1&perPage=12&includeAdult=false"
+curl.exe -i "http://localhost:3001/api/media/popular?type=anime&provider=myanimelist&page=1&perPage=12&includeAdult=false"
 ~~~
 
 The detail response is the existing normalized Media contract. It does not contain raw upstream payloads, User-owned Library fields, Sessions, or Provider credentials. Lists retain results, pagination, source, and providerErrors.
@@ -200,10 +200,10 @@ The suite must continue to use only the dedicated goraku_test database. Phase 7 
 
 Phase 7 remains suitable for local development and controlled staging only. Persistent/shared caching, production traffic shaping, authentication rate limiting, abuse monitoring, metrics infrastructure, dashboards, alerting, deployment, account recovery, Google OAuth/OIDC, and personalized User recommendations remain future work.
 
-Phase 8 is the separate UI refinement phase. It may polish Phase 6 and Phase 7 surfaces after their functional behavior is verified, but it does not reopen their domain or API contracts.
+Phase 8 is the completed UI refinement phase. It polished Phase 6 and Phase 7 surfaces after their functional behavior was verified, and the username migration was documented as a small account-identity correction without reopening Library ownership or Provider API contracts.
 
 ## Completion record
 
-Phase 7 was completed on 2026-09-10 for local development and controlled staging. `npm run check` passed with 169 server tests, 70 client tests, a production client build, and the client-secret scan. `TEST_DATABASE_URL=postgresql://goraku:goraku_dev@localhost:5432/goraku_test npm run test:integration` passed all 14 dedicated PostgreSQL integration tests. The capability, adapter, service, HTTP, cache, rate-limit, observability, browser, and boundary tests use mocked or injected Provider seams and do not require Provider credentials or live Provider calls.
+Phase 7 was completed on 2026-09-10 for local development and controlled staging. The current follow-up passed 177 server tests and 78 client tests, a production client build, and the client-secret scan. The dedicated PostgreSQL integration suite passed all 14 tests against `goraku_test`. The capability, adapter, service, HTTP, cache, rate-limit, observability, browser, and boundary tests use mocked or injected Provider seams and do not require Provider credentials or live Provider calls.
 
-The verification confirms that Provider credentials, upstream diagnostics, query contents, Sessions, Library Items, and tracking fields are excluded from cache state, runtime signals, public errors, and public Media responses. The operational boundary remains local development and controlled staging; Phase 8 remains the separate planned presentation-refinement phase.
+The verification confirms that Provider credentials, upstream diagnostics, query contents, Sessions, Library Items, and tracking fields are excluded from cache state, runtime signals, public errors, and public Media responses. The operational boundary remains local development and controlled staging; production authentication hardening and public deployment remain future work.

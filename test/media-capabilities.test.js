@@ -16,18 +16,19 @@ describe('provider capability matrix', () => {
       'trending',
       'popular',
       'latest',
-      'recommendations'
+      'recommendations',
+      'episodes'
     ]);
 
     const expected = {
-      anilist: { anime: { search: true, details: true, trending: true, popular: true, latest: true, recommendations: true } },
-      myanimelist: { anime: { search: true, details: true, trending: false, popular: true, latest: false, recommendations: true } },
+      anilist: { anime: { search: true, details: true, trending: true, popular: true, latest: true, recommendations: true, episodes: true } },
+      myanimelist: { anime: { search: true, details: true, trending: true, popular: true, latest: true, recommendations: true, episodes: true } },
       tmdb: {
-        movie: { search: true, details: true, trending: true, popular: true, latest: true, recommendations: true },
-        tv: { search: true, details: true, trending: true, popular: true, latest: true, recommendations: true }
+        movie: { search: true, details: true, trending: true, popular: true, latest: true, recommendations: true, episodes: false },
+        tv: { search: true, details: true, trending: true, popular: true, latest: true, recommendations: true, episodes: true }
       },
-      thegamesdb: { game: { search: true, details: true, trending: false, popular: false, latest: false, recommendations: false } },
-      rawg: { game: { search: true, details: true, trending: false, popular: true, latest: true, recommendations: true } }
+      thegamesdb: { game: { search: true, details: true, trending: false, popular: false, latest: false, recommendations: false, episodes: false } },
+      rawg: { game: { search: true, details: true, trending: false, popular: true, latest: true, recommendations: true, episodes: false } }
     };
 
     assert.deepEqual(PROVIDER_CAPABILITY_MATRIX, expected);
@@ -40,10 +41,15 @@ describe('provider capability matrix', () => {
       trending: true,
       popular: true,
       latest: true,
-      recommendations: true
+      recommendations: true,
+      episodes: false
     });
     assert.equal(supportsProviderCapability('tmdb', 'movie', 'details'), true);
     assert.equal(supportsProviderCapability('tmdb', 'movie', 'trending'), true);
+    assert.equal(supportsProviderCapability('tmdb', 'tv', 'episodes'), true);
+    assert.equal(supportsProviderCapability('tmdb', 'movie', 'episodes'), false);
+    assert.equal(supportsProviderCapability('anilist', 'anime', 'episodes'), true);
+    assert.equal(supportsProviderCapability('myanimelist', 'anime', 'episodes'), true);
     assert.equal(supportsProviderCapability('anilist', 'movie', 'details'), false);
     assert.equal(supportsProviderCapability('unknown', 'anime', 'details'), false);
     assert.equal(supportsProviderCapability('tmdb', 'movie', 'unknown'), false);

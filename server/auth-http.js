@@ -2,8 +2,12 @@ import express from 'express';
 import {
   AuthConflictError,
   AuthValidationError,
+  AuthTokenError,
+  AuthVerificationRequiredError,
   SESSION_TTL_MS
 } from './auth.js';
+import { PROFILE_AVATAR_MAX_BYTES } from './profile.js';
+import { createApplicationRateLimiter, resolveClientIp } from './rate-limit.js';
 
 export const DEFAULT_APP_ORIGIN = 'http://localhost:5173';
 export const SESSION_COOKIE_NAME = 'goraku_session';
@@ -18,7 +22,19 @@ const AUTHENTICATION_UNAVAILABLE = {
 
 const INVALID_CREDENTIALS = {
   code: 'INVALID_CREDENTIALS',
-  message: 'The email or password is invalid.',
+  message: 'The email, username, or password is invalid.',
+  details: []
+};
+
+const EMAIL_NOT_VERIFIED = {
+  code: 'EMAIL_NOT_VERIFIED',
+  message: 'Verify your email address before signing in.',
+  details: []
+};
+
+const AUTH_RATE_LIMIT_ERROR = {
+  code: 'AUTH_RATE_LIMITED',
+  message: 'Too many account requests. Please retry later.',
   details: []
 };
 
@@ -44,26 +60,70 @@ function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function validateCredentialBody(body) {
+function validateCredentialBody(body, { requireUsername = false } = {}) {
   if (!isPlainObject(body)) {
     return { details: [{ field: 'body', message: 'The body must be a JSON object.' }] };
   }
 
   const details = [];
+  const allowedFields = new Set(requireUsername ? ['username', 'email', 'password'] : ['identifier', 'email', 'password']);
   for (const field of Object.keys(body)) {
-    if (field !== 'email' && field !== 'password') {
+    if (!allowedFields.has(field)) {
       details.push({ field, message: 'Unknown field.' });
     }
   }
-  for (const field of ['email', 'password']) {
-    if (!Object.hasOwn(body, field)) {
-      details.push({ field, message: 'This field is required.' });
-    } else if (typeof body[field] !== 'string') {
+  if (requireUsername) {
+    for (const field of ['username', 'email', 'password']) {
+      if (!Object.hasOwn(body, field)) {
+        details.push({ field, message: 'This field is required.' });
+      } else if (typeof body[field] !== 'string') {
+        details.push({ field, message: 'This field must be a string.' });
+      }
+    }
+    return details.length > 0 ? { details } : { value: body };
+  }
+
+  const hasIdentifier = Object.hasOwn(body, 'identifier');
+  const hasLegacyEmail = Object.hasOwn(body, 'email');
+  if (!hasIdentifier && !hasLegacyEmail) {
+    details.push({ field: 'identifier', message: 'This field is required.' });
+  }
+  if (hasIdentifier && hasLegacyEmail) {
+    details.push({ field: 'identifier', message: 'Use identifier or email, not both.' });
+  }
+  for (const field of ['identifier', 'email', 'password']) {
+    if (Object.hasOwn(body, field) && typeof body[field] !== 'string') {
       details.push({ field, message: 'This field must be a string.' });
     }
   }
 
-  return details.length > 0 ? { details } : { value: body };
+  return details.length > 0
+    ? { details }
+    : { value: { identifier: hasIdentifier ? body.identifier : body.email, password: body.password } };
+}
+
+function validateEmailBody(body) {
+  if (!isPlainObject(body)) return { details: [{ field: 'body', message: 'The body must be a JSON object.' }] };
+  const details = [];
+  for (const field of Object.keys(body)) {
+    if (field !== 'email') details.push({ field, message: 'Unknown field.' });
+  }
+  if (!Object.hasOwn(body, 'email')) details.push({ field: 'email', message: 'This field is required.' });
+  else if (typeof body.email !== 'string') details.push({ field: 'email', message: 'This field must be a string.' });
+  return details.length > 0 ? { details } : { value: { email: body.email } };
+}
+
+function validatePasswordResetBody(body) {
+  if (!isPlainObject(body)) return { details: [{ field: 'body', message: 'The body must be a JSON object.' }] };
+  const details = [];
+  for (const field of Object.keys(body)) {
+    if (!['token', 'password'].includes(field)) details.push({ field, message: 'Unknown field.' });
+  }
+  for (const field of ['token', 'password']) {
+    if (!Object.hasOwn(body, field)) details.push({ field, message: 'This field is required.' });
+    else if (typeof body[field] !== 'string') details.push({ field, message: 'This field must be a string.' });
+  }
+  return details.length > 0 ? { details } : { value: { token: body.token, password: body.password } };
 }
 
 function resolveAppOrigin(appOrigin) {
@@ -127,8 +187,10 @@ function clearSessionCookie(response, options) {
 }
 
 function publicUser(user) {
-  if (!user || typeof user.id !== 'string' || typeof user.email !== 'string') return null;
-  return { id: user.id, email: user.email };
+  if (!user || typeof user.id !== 'string' || typeof user.username !== 'string' || typeof user.email !== 'string') return null;
+  const result = { id: user.id, username: user.username, email: user.email };
+  if (Object.hasOwn(user, 'avatarUpdatedAt')) result.avatarUpdatedAt = user.avatarUpdatedAt ?? null;
+  return result;
 }
 
 function sessionContext(result) {
@@ -156,13 +218,21 @@ function isAuthConflictError(error) {
 
 function handleServiceError(response, error) {
   if (isAuthValidationError(error)) {
-    sendValidationError(response, [], error.message);
+    sendValidationError(response, error.details, error.message);
     return;
   }
   if (isAuthConflictError(error)) {
     sendError(response, 409, {
       code: 'CONFLICT',
       message: 'Registration could not be completed.',
+      details: []
+    });
+    return;
+  }
+  if (error instanceof AuthTokenError || error?.code === 'AUTH_TOKEN_INVALID') {
+    sendError(response, 400, {
+      code: 'AUTH_TOKEN_INVALID',
+      message: 'This authentication link is invalid or expired.',
       details: []
     });
     return;
@@ -250,21 +320,31 @@ function unavailableIfMissingService(response, authService, method) {
 /**
  * Build the local authentication HTTP routes.
  *
- * @param {{ authService?: ReturnType<import('./auth.js').createAuthService>, cookieName?: string, secureCookies?: boolean }} options
+ * @param {{ authService?: ReturnType<import('./auth.js').createAuthService>, cookieName?: string, secureCookies?: boolean, appOrigin?: string, authRateLimit?: object }} options
  */
 export function createAuthRouter({
   authService,
   cookieName = SESSION_COOKIE_NAME,
-  secureCookies = process.env.NODE_ENV === 'production'
+  secureCookies = process.env.NODE_ENV === 'production',
+  appOrigin = process.env.APP_ORIGIN ?? DEFAULT_APP_ORIGIN,
+  authRateLimit = {}
 } = {}) {
   const router = express.Router();
+  const resolvedAppOrigin = resolveAppOrigin(appOrigin);
   const cookieOptions = { cookieName, secure: secureCookies };
   const requireSession = createRequireSessionMiddleware({ authService, cookieName });
+  const authRateLimiter = createApplicationRateLimiter({
+    tokensPerMinute: 30,
+    burstCapacity: 10,
+    resolveKey: (request) => `${resolveClientIp(request)}:${request.path}`,
+    error: AUTH_RATE_LIMIT_ERROR,
+    ...authRateLimit
+  });
 
-  router.post('/register', async (request, response) => {
+  router.post('/register', authRateLimiter.middleware, async (request, response) => {
     if (unavailableIfMissingService(response, authService, 'register')) return;
 
-    const validation = validateCredentialBody(request.body);
+    const validation = validateCredentialBody(request.body, { requireUsername: true });
     if (validation.details) {
       sendValidationError(response, validation.details);
       return;
@@ -273,18 +353,26 @@ export function createAuthRouter({
     try {
       const result = await authService.register(validation.value);
       const context = sessionContext(result);
-      if (!context || typeof result.session.token !== 'string') {
-        sendError(response, 503, AUTHENTICATION_UNAVAILABLE);
+      if (context && typeof result.session.token === 'string') {
+        setSessionCookie(response, result.session.token, cookieOptions);
+        response.location('/api/auth/me').status(201).json(context.user);
         return;
       }
-      setSessionCookie(response, result.session.token, cookieOptions);
-      response.location('/api/auth/me').status(201).json(context.user);
+      if (result?.verificationRequired === true && typeof result.email === 'string') {
+        response.status(202).json({
+          code: 'EMAIL_VERIFICATION_REQUIRED',
+          message: 'Check your email to verify your account before signing in.',
+          email: result.email
+        });
+        return;
+      }
+      sendError(response, 503, AUTHENTICATION_UNAVAILABLE);
     } catch (error) {
       handleServiceError(response, error);
     }
   });
 
-  router.post('/login', async (request, response) => {
+  router.post('/login', authRateLimiter.middleware, async (request, response) => {
     if (unavailableIfMissingService(response, authService, 'login')) return;
 
     const validation = validateCredentialBody(request.body);
@@ -303,11 +391,104 @@ export function createAuthRouter({
       setSessionCookie(response, result.session.token, cookieOptions);
       response.status(200).json(context.user);
     } catch (error) {
+      if (error instanceof AuthVerificationRequiredError || error?.code === 'EMAIL_NOT_VERIFIED') {
+        sendError(response, 403, EMAIL_NOT_VERIFIED);
+        return;
+      }
       if (isAuthValidationError(error)) {
         sendError(response, 401, INVALID_CREDENTIALS);
         return;
       }
       sendError(response, 503, AUTHENTICATION_UNAVAILABLE);
+    }
+  });
+
+  router.post('/resend-verification', authRateLimiter.middleware, async (request, response) => {
+    if (unavailableIfMissingService(response, authService, 'resendVerification')) return;
+    const validation = validateEmailBody(request.body);
+    if (validation.details) {
+      sendValidationError(response, validation.details);
+      return;
+    }
+    try {
+      await authService.resendVerification(validation.value);
+      response.status(202).json({
+        message: 'If that account is waiting for verification, a new email has been sent.'
+      });
+    } catch (error) {
+      handleServiceError(response, error);
+    }
+  });
+
+  router.post('/forgot-password', authRateLimiter.middleware, async (request, response) => {
+    if (unavailableIfMissingService(response, authService, 'requestPasswordReset')) return;
+    const validation = validateEmailBody(request.body);
+    if (validation.details) {
+      sendValidationError(response, validation.details);
+      return;
+    }
+    try {
+      await authService.requestPasswordReset(validation.value);
+      response.status(202).json({
+        message: 'If a verified account exists for that email, a password reset email has been sent.'
+      });
+    } catch (error) {
+      handleServiceError(response, error);
+    }
+  });
+
+  router.get('/verify-email', async (request, response) => {
+    if (unavailableIfMissingService(response, authService, 'verifyEmail')) return;
+    const token = typeof request.query.token === 'string' ? request.query.token : '';
+    if (!token) {
+      sendError(response, 400, {
+        code: 'AUTH_TOKEN_INVALID',
+        message: 'This authentication link is invalid or expired.',
+        details: []
+      });
+      return;
+    }
+    try {
+      const result = await authService.verifyEmail(token);
+      if (!result || typeof result.session?.token !== 'string') {
+        throw new AuthTokenError();
+      }
+      setSessionCookie(response, result.session.token, cookieOptions);
+      const redirect = new URL(resolvedAppOrigin);
+      redirect.searchParams.set('emailVerified', '1');
+      response.redirect(303, redirect.toString());
+    } catch (error) {
+      handleServiceError(response, error);
+    }
+  });
+
+  router.get('/reset-password', (request, response) => {
+    const token = typeof request.query.token === 'string' ? request.query.token : '';
+    if (!token) {
+      sendError(response, 400, {
+        code: 'AUTH_TOKEN_INVALID',
+        message: 'This authentication link is invalid or expired.',
+        details: []
+      });
+      return;
+    }
+    const redirect = new URL(resolvedAppOrigin);
+    redirect.searchParams.set('resetToken', token);
+    response.redirect(303, redirect.toString());
+  });
+
+  router.post('/reset-password', authRateLimiter.middleware, async (request, response) => {
+    if (unavailableIfMissingService(response, authService, 'resetPassword')) return;
+    const validation = validatePasswordResetBody(request.body);
+    if (validation.details) {
+      sendValidationError(response, validation.details);
+      return;
+    }
+    try {
+      await authService.resetPassword(validation.value);
+      response.status(200).json({ message: 'Your password was reset. You can now sign in.' });
+    } catch (error) {
+      handleServiceError(response, error);
     }
   });
 
@@ -328,6 +509,66 @@ export function createAuthRouter({
 
   router.get('/me', requireSession, (request, response) => {
     response.status(200).json(request.user);
+  });
+
+  router.get('/avatar', requireSession, async (request, response) => {
+    if (unavailableIfMissingService(response, authService, 'getAvatar')) return;
+
+    try {
+      const avatar = await authService.getAvatar(request.user.id);
+      if (!avatar) {
+        sendError(response, 404, {
+          code: 'AVATAR_NOT_FOUND',
+          message: 'This User is using the Goraku logo.',
+          details: []
+        });
+        return;
+      }
+      response.setHeader('Cache-Control', 'private, no-store');
+      response.type(avatar.contentType).status(200).send(avatar.data);
+    } catch {
+      sendError(response, 503, AUTHENTICATION_UNAVAILABLE);
+    }
+  });
+
+  router.put(
+    '/avatar',
+    requireSession,
+    express.raw({ type: () => true, limit: `${PROFILE_AVATAR_MAX_BYTES}b` }),
+    async (request, response) => {
+      if (unavailableIfMissingService(response, authService, 'updateAvatar')) return;
+
+      try {
+        const user = await authService.updateAvatar({
+          userId: request.user.id,
+          data: request.body,
+          contentType: request.get('content-type')?.split(';', 1)[0].trim().toLowerCase()
+        });
+        const payload = publicUser(user);
+        if (!payload) {
+          sendError(response, 503, AUTHENTICATION_UNAVAILABLE);
+          return;
+        }
+        response.status(200).json(payload);
+      } catch (error) {
+        handleServiceError(response, error);
+      }
+    }
+  );
+
+  router.delete('/avatar', requireSession, async (request, response) => {
+    if (unavailableIfMissingService(response, authService, 'removeAvatar')) return;
+
+    try {
+      const payload = publicUser(await authService.removeAvatar(request.user.id));
+      if (!payload) {
+        sendError(response, 503, AUTHENTICATION_UNAVAILABLE);
+        return;
+      }
+      response.status(200).json(payload);
+    } catch (error) {
+      handleServiceError(response, error);
+    }
   });
 
   return router;

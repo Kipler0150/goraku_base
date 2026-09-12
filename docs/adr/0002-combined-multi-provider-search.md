@@ -2,7 +2,7 @@
 
 Status: accepted
 
-Phase 4 adds TheGamesDB-primary game search, RAWG availability fallback, and Combined Search to the existing typed media search route. Typed requests retain the Phase 3 provider-owned response contract. `type=all` is the explicit Combined Search mode and runs independent media-type lanes: Anime keeps the AniList-primary/MyAnimeList-fallback policy, movies and TV use TMDB, and games use TheGamesDB with RAWG fallback.
+Phase 4 adds TheGamesDB-primary game search, RAWG availability fallback, and Combined Search to the existing typed media search route. Typed requests retain the Phase 3 provider-owned response contract. `type=all` is the explicit Combined Search mode and runs independent media-type lanes: Anime uses the MyAnimeList-primary/AniList-availability-fallback policy, movies and TV use TMDB, and games use TheGamesDB with RAWG fallback.
 
 Combined Search returns normalized Media values without pretending that different Providers share a relevance score, total, page size, or identity. Results are ordered deterministically by media type, while each lane preserves its Provider's ordering. Cross-Provider duplicates are retained because cross-Provider matching is not yet part of the domain model.
 

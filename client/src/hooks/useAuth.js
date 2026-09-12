@@ -1,7 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getCurrentUser, login as loginRequest, logout as logoutRequest, register as registerRequest } from '../api/auth.js';
+import {
+  getCurrentUser,
+  login as loginRequest,
+  logout as logoutRequest,
+  requestPasswordReset as requestPasswordResetRequest,
+  register as registerRequest,
+  resetPassword as resetPasswordRequest,
+  resendVerification as resendVerificationRequest,
+  removeAvatar as removeAvatarRequest,
+  uploadAvatar as uploadAvatarRequest
+} from '../api/auth.js';
 
-const initialState = { status: 'unauthenticated', user: null, error: null };
+const initialState = { status: 'unauthenticated', user: null, error: null, verificationEmail: null };
 
 export function useAuth({ checkOnMount = false } = {}) {
   const [state, setState] = useState(initialState);
@@ -31,16 +41,16 @@ export function useAuth({ checkOnMount = false } = {}) {
       .then((user) => {
         if (requestRef.current?.requestId !== requestId) return;
         requestRef.current = null;
-        setState({ status: 'authenticated', user, error: null });
+        setState({ status: 'authenticated', user, error: null, verificationEmail: null });
       })
       .catch((error) => {
         if (controller.signal.aborted || requestRef.current?.requestId !== requestId) return;
         requestRef.current = null;
         if (error.status === 401 || error.code === 'INVALID_PAYLOAD') {
-          setState({ status: 'unauthenticated', user: null, error: null });
+          setState({ status: 'unauthenticated', user: null, error: null, verificationEmail: null });
           return;
         }
-        setState({ status: 'error', user: null, error });
+        setState({ status: 'error', user: null, error, verificationEmail: null });
       });
   }, [cancelRequest]);
 
@@ -55,12 +65,16 @@ export function useAuth({ checkOnMount = false } = {}) {
       const user = await request(credentials, { signal: controller.signal });
       if (requestRef.current?.requestId !== requestId) return null;
       requestRef.current = null;
-      setState({ status: 'authenticated', user, error: null });
+      if (user?.code === 'EMAIL_VERIFICATION_REQUIRED') {
+        setState({ status: 'verification-required', user: null, error: null, verificationEmail: user.email });
+        return user;
+      }
+      setState({ status: 'authenticated', user, error: null, verificationEmail: null });
       return user;
     } catch (error) {
       if (controller.signal.aborted || requestRef.current?.requestId !== requestId) return null;
       requestRef.current = null;
-      setState({ status: 'unauthenticated', user: null, error });
+      setState({ status: 'unauthenticated', user: null, error, verificationEmail: null });
       return null;
     }
   }, [cancelRequest]);
@@ -73,13 +87,13 @@ export function useAuth({ checkOnMount = false } = {}) {
     const controller = new AbortController();
     const requestId = ++requestIdRef.current;
     requestRef.current = { controller, requestId };
-    setState((current) => ({ ...current, status: 'logging-out', error: null }));
+      setState((current) => ({ ...current, status: 'logging-out', error: null }));
 
     try {
       await logoutRequest({ signal: controller.signal });
       if (requestRef.current?.requestId !== requestId) return;
       requestRef.current = null;
-      setState({ status: 'unauthenticated', user: null, error: null });
+      setState({ status: 'unauthenticated', user: null, error: null, verificationEmail: null });
     } catch (error) {
       if (controller.signal.aborted || requestRef.current?.requestId !== requestId) return;
       requestRef.current = null;
@@ -87,9 +101,111 @@ export function useAuth({ checkOnMount = false } = {}) {
     }
   }, [cancelRequest]);
 
+  const updateAvatar = useCallback(async (file) => {
+    cancelRequest();
+    const controller = new AbortController();
+    const requestId = ++requestIdRef.current;
+    requestRef.current = { controller, requestId };
+    setState((current) => ({ ...current, status: 'updating-avatar', error: null }));
+
+    try {
+      const user = await uploadAvatarRequest(file, { signal: controller.signal });
+      if (requestRef.current?.requestId !== requestId) return null;
+      requestRef.current = null;
+      setState({ status: 'authenticated', user, error: null, verificationEmail: null });
+      return user;
+    } catch (error) {
+      if (controller.signal.aborted || requestRef.current?.requestId !== requestId) return null;
+      requestRef.current = null;
+      setState((current) => ({ ...current, status: 'authenticated', error }));
+      return null;
+    }
+  }, [cancelRequest]);
+
+  const removeAvatar = useCallback(async () => {
+    cancelRequest();
+    const controller = new AbortController();
+    const requestId = ++requestIdRef.current;
+    requestRef.current = { controller, requestId };
+    setState((current) => ({ ...current, status: 'removing-avatar', error: null }));
+
+    try {
+      const user = await removeAvatarRequest({ signal: controller.signal });
+      if (requestRef.current?.requestId !== requestId) return null;
+      requestRef.current = null;
+      setState({ status: 'authenticated', user, error: null, verificationEmail: null });
+      return user;
+    } catch (error) {
+      if (controller.signal.aborted || requestRef.current?.requestId !== requestId) return null;
+      requestRef.current = null;
+      setState((current) => ({ ...current, status: 'authenticated', error }));
+      return null;
+    }
+  }, [cancelRequest]);
+
   const clearSession = useCallback(() => {
     cancelRequest();
-    setState({ status: 'unauthenticated', user: null, error: null });
+    setState({ status: 'unauthenticated', user: null, error: null, verificationEmail: null });
+  }, [cancelRequest]);
+
+  const resendVerification = useCallback(async (email) => {
+    cancelRequest();
+    const controller = new AbortController();
+    const requestId = ++requestIdRef.current;
+    requestRef.current = { controller, requestId };
+    setState((current) => ({ ...current, status: 'resending-verification', error: null }));
+    try {
+      await resendVerificationRequest(email, { signal: controller.signal });
+      if (requestRef.current?.requestId !== requestId) return false;
+      requestRef.current = null;
+      setState({ status: 'verification-required', user: null, error: null, verificationEmail: email });
+      return true;
+    } catch (error) {
+      if (controller.signal.aborted || requestRef.current?.requestId !== requestId) return false;
+      requestRef.current = null;
+      setState((current) => ({ ...current, status: 'unauthenticated', error }));
+      return false;
+    }
+  }, [cancelRequest]);
+
+  const requestPasswordReset = useCallback(async (email) => {
+    cancelRequest();
+    const controller = new AbortController();
+    const requestId = ++requestIdRef.current;
+    requestRef.current = { controller, requestId };
+    setState((current) => ({ ...current, status: 'requesting-password-reset', error: null }));
+    try {
+      await requestPasswordResetRequest(email, { signal: controller.signal });
+      if (requestRef.current?.requestId !== requestId) return false;
+      requestRef.current = null;
+      setState({ status: 'unauthenticated', user: null, error: null, verificationEmail: null });
+      return true;
+    } catch (error) {
+      if (controller.signal.aborted || requestRef.current?.requestId !== requestId) return false;
+      requestRef.current = null;
+      setState((current) => ({ ...current, status: 'unauthenticated', error }));
+      return false;
+    }
+  }, [cancelRequest]);
+
+  const resetPassword = useCallback(async (token, password) => {
+    cancelRequest();
+    const controller = new AbortController();
+    const requestId = ++requestIdRef.current;
+    requestRef.current = { controller, requestId };
+    setState((current) => ({ ...current, status: 'resetting-password', error: null }));
+    try {
+      await resetPasswordRequest(token, password, { signal: controller.signal });
+      if (requestRef.current?.requestId !== requestId) return false;
+      requestRef.current = null;
+      setState({ status: 'unauthenticated', user: null, error: null, verificationEmail: null });
+      return true;
+    } catch (error) {
+      if (controller.signal.aborted || requestRef.current?.requestId !== requestId) return false;
+      requestRef.current = null;
+      setState((current) => ({ ...current, status: 'unauthenticated', error }));
+      return false;
+    }
   }, [cancelRequest]);
 
   useEffect(() => {
@@ -107,6 +223,18 @@ export function useAuth({ checkOnMount = false } = {}) {
     register,
     login,
     logout,
-    isBusy: state.status === 'loading' || state.status === 'authenticating' || state.status === 'logging-out'
+    updateAvatar,
+    removeAvatar,
+    resendVerification,
+    requestPasswordReset,
+    resetPassword,
+    isBusy: state.status === 'loading'
+      || state.status === 'authenticating'
+      || state.status === 'logging-out'
+      || state.status === 'updating-avatar'
+      || state.status === 'removing-avatar'
+      || state.status === 'resending-verification'
+      || state.status === 'requesting-password-reset'
+      || state.status === 'resetting-password'
   };
 }

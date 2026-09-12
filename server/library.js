@@ -12,6 +12,7 @@ export const PERSONAL_RATING_STEP = 0.5;
 export const MAX_NOTE_LENGTH = 5_000;
 export const MAX_USER_OWNED_NAME_LENGTH = 50;
 export const SUPPORTED_PROGRESS_TYPES = Object.freeze(['ANIME', 'MOVIE', 'TV', 'GAME']);
+const EPISODE_TRACKING_TYPES = new Set(['ANIME', 'TV']);
 
 export class LibraryValidationError extends Error {
   constructor(message, details = []) {
@@ -421,6 +422,74 @@ export function createLibraryRepository({ pool } = {}) {
         FROM updated
       `, values);
       return result.rowCount === 0 ? null : publicLibraryItem(result.rows[0]);
+    },
+
+    async listWatchedEpisodes({ userId, id } = {}) {
+      const owner = await pool.query(`
+        SELECT type
+        FROM library_items
+        WHERE user_id = $1 AND id = $2
+      `, [userId, id]);
+      if (owner.rowCount === 0) return null;
+      if (!EPISODE_TRACKING_TYPES.has(owner.rows[0].type)) {
+        throw trackingValidationError('episodes', 'Episode tracking is only supported for TV and Anime Library Items.');
+      }
+
+      const result = await pool.query(`
+        SELECT season_number AS season, episode_number AS episode
+        FROM library_item_episodes
+        WHERE user_id = $1 AND library_item_id = $2
+        ORDER BY season_number ASC, episode_number ASC
+      `, [userId, id]);
+      return { watched: result.rows.map(({ season, episode }) => ({ season, episode })) };
+    },
+
+    async updateWatchedEpisodes({ userId, id, episodes = [] } = {}) {
+      const owner = await pool.query(`
+        SELECT type
+        FROM library_items
+        WHERE user_id = $1 AND id = $2
+      `, [userId, id]);
+      if (owner.rowCount === 0) return null;
+      if (!EPISODE_TRACKING_TYPES.has(owner.rows[0].type)) {
+        throw trackingValidationError('episodes', 'Episode tracking is only supported for TV and Anime Library Items.');
+      }
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const changes = JSON.stringify(episodes);
+        await client.query(`
+          DELETE FROM library_item_episodes AS existing
+          USING jsonb_to_recordset($3::jsonb) AS change(season integer, episode integer, watched boolean)
+          WHERE existing.user_id = $1
+            AND existing.library_item_id = $2
+            AND existing.season_number = change.season
+            AND existing.episode_number = change.episode
+            AND change.watched = FALSE
+        `, [userId, id, changes]);
+        await client.query(`
+          INSERT INTO library_item_episodes (user_id, library_item_id, season_number, episode_number)
+          SELECT $1, $2, change.season, change.episode
+          FROM jsonb_to_recordset($3::jsonb) AS change(season integer, episode integer, watched boolean)
+          WHERE change.watched = TRUE
+          ON CONFLICT (user_id, library_item_id, season_number, episode_number)
+          DO UPDATE SET watched_at = CURRENT_TIMESTAMP
+        `, [userId, id, changes]);
+        const result = await client.query(`
+          SELECT season_number AS season, episode_number AS episode
+          FROM library_item_episodes
+          WHERE user_id = $1 AND library_item_id = $2
+          ORDER BY season_number ASC, episode_number ASC
+        `, [userId, id]);
+        await client.query('COMMIT');
+        return { watched: result.rows.map(({ season, episode }) => ({ season, episode })) };
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        throw error;
+      } finally {
+        client.release();
+      }
     },
 
     async remove({ userId, id } = {}) {

@@ -16,6 +16,18 @@ function page(media, pageInfo = { currentPage: 1, perPage: 12, hasNextPage: fals
   return { data: { Page: { pageInfo, media } } };
 }
 
+function episodePage({ episodes = null, status = 'RELEASING', nodes = [], pageInfo = { currentPage: 1, perPage: 25, hasNextPage: false } } = {}) {
+  return {
+    data: {
+      Media: {
+        episodes,
+        status,
+        airingSchedule: { pageInfo, nodes }
+      }
+    }
+  };
+}
+
 describe('AniList adapter', () => {
   it('normalizes anime results and forwards search preferences', async () => {
     let request;
@@ -137,6 +149,83 @@ describe('AniList adapter', () => {
     assert.deepEqual(result, {
       results: [],
       pagination: { page: 1, perPage: 12, hasMore: false }
+    });
+  });
+
+  it('loads released anime episodes for AniList IDs and generic episode labels', async () => {
+    const requests = [];
+    const now = Date.UTC(2026, 0, 1);
+    const adapter = createAniListAdapter({
+      clock: () => now,
+      request: async (url, options) => {
+        requests.push({ url, options });
+        return response(episodePage({
+          episodes: 2,
+          status: 'RELEASING',
+          nodes: [
+            { episode: 1, airingAt: Math.floor(Date.UTC(2025, 11, 25) / 1000) },
+            { episode: 2, airingAt: Math.floor(Date.UTC(2026, 1, 1) / 1000) }
+          ]
+        }));
+      }
+    });
+
+    const result = await adapter.getSeasonEpisodes({ provider: 'anilist', providerId: '86', season: 1 });
+
+    assert.deepEqual(JSON.parse(requests[0].options.body).variables, {
+      id: 86,
+      page: 1,
+      perPage: 25,
+      notYetAired: false
+    });
+    assert.deepEqual(result, {
+      provider: 'anilist',
+      providerId: '86',
+      type: 'ANIME',
+      season: 1,
+      episodes: [{
+        number: 1,
+        title: 'Episode 1',
+        airDate: { year: 2025, month: 12, day: 25 },
+        runtimeMinutes: null,
+        image: null
+      }]
+    });
+  });
+
+  it('resolves MyAnimeList IDs through AniList and fills finished episode gaps', async () => {
+    let variables;
+    const adapter = createAniListAdapter({
+      clock: () => Date.UTC(2026, 0, 1),
+      request: async (_url, options) => {
+        variables = JSON.parse(options.body).variables;
+        return response(episodePage({
+          episodes: 3,
+          status: 'FINISHED',
+          nodes: [{ episode: 2, airingAt: Math.floor(Date.UTC(2011, 3, 24) / 1000) }]
+        }));
+      }
+    });
+
+    const result = await adapter.getSeasonEpisodes({ provider: 'myanimelist', providerId: '1535', season: 1 });
+
+    assert.deepEqual(variables, {
+      idMal: 1535,
+      page: 1,
+      perPage: 25,
+      notYetAired: false
+    });
+    assert.deepEqual(result.episodes, [
+      { number: 1, title: 'Episode 1', airDate: null, runtimeMinutes: null, image: null },
+      { number: 2, title: 'Episode 2', airDate: { year: 2011, month: 4, day: 24 }, runtimeMinutes: null, image: null },
+      { number: 3, title: 'Episode 3', airDate: null, runtimeMinutes: null, image: null }
+    ]);
+    assert.deepEqual(result, {
+      provider: 'myanimelist',
+      providerId: '1535',
+      type: 'ANIME',
+      season: 1,
+      episodes: result.episodes
     });
   });
 

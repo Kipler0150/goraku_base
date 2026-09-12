@@ -3,14 +3,14 @@
 Status: complete
 Completion: complete
 
-This walkthrough covers the implemented Phase 5 local/staging slice. Search remains public. Local email/password Sessions protect a user-owned library. Google authentication, account recovery, production rate limiting, and public deployment are deliberately future work.
+This walkthrough covers the implemented Phase 5 local/staging slice. Search remains public. Local credential Sessions protect a user-owned library. Google authentication, account recovery, production rate limiting, and public deployment are deliberately future work.
 
 ## Outcome
 
 Phase 5 adds:
 
 - PostgreSQL persistence through `pg` and explicit forward-only SQL migrations.
-- Local email/password registration and login.
+- Local registration with username, email, and password; login accepts either email or username with the password.
 - Seven-day, server-managed Sessions in an HTTP-only cookie.
 - Exact browser Origin validation for API mutations.
 - Ownership-scoped Library Item CRUD for Library Status and favorite.
@@ -103,10 +103,11 @@ Each integration suite creates a unique temporary schema, runs the migrations in
 
 ## Authentication flow
 
-The public User is only `{ id, email }`. Registration and login normalize email by trimming and lowercasing it, then return the User while setting an opaque Session token only in the HTTP-only `goraku_session` cookie.
+The public User is `{ id, username, email }`. Registration normalizes a unique username and email by trimming and lowercasing them, then returns the User while setting an opaque Session token only in the HTTP-only `goraku_session` cookie. Login accepts `{ identifier, password }`, where the identifier is normalized and matched against either the User’s email or username. The legacy `{ email, password }` request remains accepted for existing clients.
 
 ```bash
-curl.exe -i -c cookies.txt -H "Origin: http://localhost:5173" -H "Content-Type: application/json" -d "{\"email\":\"reader@example.com\",\"password\":\"correct horse battery staple!\"}" http://localhost:3001/api/auth/register
+curl.exe -i -c cookies.txt -H "Origin: http://localhost:5173" -H "Content-Type: application/json" -d "{\"username\":\"reader\",\"email\":\"reader@example.com\",\"password\":\"correct horse battery staple!\"}" http://localhost:3001/api/auth/register
+curl.exe -i -b cookies.txt -c cookies.txt -H "Origin: http://localhost:5173" -H "Content-Type: application/json" -d "{\"identifier\":\"reader\",\"password\":\"correct horse battery staple!\"}" http://localhost:3001/api/auth/login
 curl.exe -i -b cookies.txt http://localhost:3001/api/auth/me
 curl.exe -i -b cookies.txt -H "Origin: http://localhost:5173" -X POST http://localhost:3001/api/auth/logout
 ```
@@ -147,7 +148,7 @@ The client’s library view is intentionally reference-only. It displays the sto
 npm run check
 ```
 
-`npm run check` runs the unit/server tests, browser tests, production client build, and client secret scan. It does not require PostgreSQL, `DATABASE_URL`, `TEST_DATABASE_URL`, or live provider credentials. Provider tests use deterministic fixtures, and missing provider credentials produce safe unavailable responses. Expected final result for this repository is 96 server tests and 39 client tests passing, followed by a successful Vite build and secret scan.
+`npm run check` runs the unit/server tests, browser tests, production client build, and client secret scan. It does not require PostgreSQL, `DATABASE_URL`, `TEST_DATABASE_URL`, or live provider credentials. Provider tests use deterministic fixtures, and missing provider credentials produce safe unavailable responses. Expected final result for this repository is 177 server tests and 78 client tests passing, followed by a successful Vite build and secret scan.
 
 The client scan loads `.env.local` if present and rejects server-only configuration identifiers or configured values in `client/dist`, including database settings, PostgreSQL credentials, TMDB/MAL/TheGamesDB/RAWG settings, and provider keys. It also rejects recognizable password-hash, Session-token, database-URL, and server-diagnostic field/format patterns. It does not treat the expected HTTP-only cookie name as a client credential.
 
@@ -168,7 +169,7 @@ npm run test:integration
 
 This command runs migration transaction/repeatability tests, PostgreSQL authentication model tests, real HTTP authentication tests, and real HTTP Library CRUD tests. It verifies schema creation, normalized registration, password/session derivation, cookie-backed `/me`, Origin validation, generic failures, concurrent Sessions, logout isolation, lazy expiry, ownership isolation, duplicate handling, defaults, CRUD, and deterministic pagination. It requires only the dedicated database and never calls a media provider.
 
-Expected final result is 9 integration tests passing. A missing URL, an invalid PostgreSQL URL, or a database other than `goraku_test` fails before any test can run.
+Expected final result is 14 integration tests passing. A missing URL, an invalid PostgreSQL URL, or a database other than `goraku_test` fails before any test can run.
 
 ## Troubleshooting
 
@@ -190,9 +191,9 @@ Phase 5 is local-development/staging functionality, not a production deployment 
 
 Verified on 2026-09-10:
 
-- `npm run check` — passed: 96 server tests, 39 client tests, production build, and client secret scan.
+- `npm run check` — passed: 177 server tests, 78 client tests, production build, and client secret scan.
 - `DATABASE_URL=.../goraku npm run db:migrate` — passed: database schema already up to date.
-- `TEST_DATABASE_URL=.../goraku_test npm run test:integration` — passed: 9 integration tests across migrations, model auth, HTTP auth, and HTTP library CRUD.
+- `TEST_DATABASE_URL=.../goraku_test npm run test:integration` — passed: 14 integration tests across migrations, model auth, HTTP auth, and HTTP library CRUD.
 - `docker compose ps` — PostgreSQL reported `healthy` during integration verification.
 
 The application is complete for the Phase 5 local/staging boundary described above. Future deployment and production hardening require a separate phase and separate verification.

@@ -202,7 +202,7 @@ MANGA and COMIC remain reserved Media types without Phase 6 Progress rules. Prog
 
 ## Browser behavior
 
-1. Search remains public and its cards expose only the Save to library action and detected saved state.
+1. Search remains public and its cards expose the Save to library action and detected saved state. After authentication, if private Tags or Collections exist, the bookmark offers save-method and destination dropdowns before saving; if none exist, it saves immediately to the Library. A filled bookmark removes the Library Item, and the database cascades its Tag and Collection memberships.
 2. A valid local Session unlocks the Library view and private Tag/Collection panel.
 3. The Library editor presents Personal Rating as five keyboard-operable stars with half-star values, an explicit unrated action, a plain-text Note editor, and only the Progress control matching each Library Item type.
 4. Library Status, favorite, Tag, and Collection filters are preserved while loading another page.

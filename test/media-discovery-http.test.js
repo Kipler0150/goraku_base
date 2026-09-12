@@ -124,6 +124,24 @@ describe('media discovery HTTP API', () => {
     assert.equal(rawg.calls.length, 0);
   });
 
+  it('falls back from unavailable MyAnimeList to AniList for server-selected Anime discovery', async () => {
+    const anilist = createDiscoveryAdapter({ result: { results: [anime], pagination: { page: 1, perPage: 12, hasMore: false } } });
+    const app = createApp({ myanimelistAdapter: { enabled: false }, anilistAdapter: anilist });
+
+    const fallback = await request(app).get('/api/media/trending?type=anime&includeAdult=false');
+
+    assert.equal(fallback.status, 200);
+    assert.equal(fallback.body.source, 'anilist');
+    assert.deepEqual(anilist.calls, [{
+      operation: 'trending',
+      options: { type: 'anime', provider: 'anilist', page: 1, perPage: 12, includeAdult: false }
+    }]);
+
+    const explicit = await request(app).get('/api/media/trending?type=anime&provider=myanimelist');
+    assert.equal(explicit.status, 503);
+    assert.equal(explicit.body.error.code, PROVIDER_ERROR_CODES.UNAVAILABLE);
+  });
+
   it('returns Provider-owned recommendations through the anchor route', async () => {
     const tmdb = createDiscoveryAdapter({ result: { results: [movie], pagination: { page: 1, perPage: 12, hasMore: false } } });
     const app = createApp({ tmdbAdapter: tmdb });

@@ -6,17 +6,25 @@ Goraku Base brings entertainment discovery and personal tracking into one librar
 
 **Media**: An entertainment entry described by an external provider, independently of any user's tracking preferences.
 
-**Provider**: An external source of media metadata, initially AniList, TMDB, TheGamesDB, or RAWG.
+**Provider**: An external source of media metadata, including MyAnimeList as the primary Anime source with AniList as its availability fallback, plus TMDB, TheGamesDB, or RAWG.
 
 **Library Item**: A user's saved reference to Media, together with that user's tracking information.
 _Avoid_: Media when referring to personal tracking data.
 
-**User**: A person with a Goraku Base account who can own Library Items.
+**User**: A person with a Goraku Base account who can be identified by a unique username or email address and can own Library Items.
 _Avoid_: Account when referring to the person.
+
+**Username**: A unique, User-chosen public display name for identifying a User in the app.
 
 **Authentication Identity**: A login identity associated with a User, such as a local credential or a future external identity.
 
-**Local Credential**: An email and password identity managed by Goraku Base for authenticating a User.
+**Local Credential**: A password-protected identity managed by Goraku Base, reachable through a User’s unique email address or username.
+
+**Login Identifier**: The unique email address or username a User may provide to access their Local Credential.
+
+**Verified Email**: A User’s email address proven to be controlled by that User through Goraku Base’s verification flow; syntactic validity alone is not verification.
+
+**Disposable Email Domain**: An email domain known to provide short-lived or throwaway mailboxes; it is distinct from an ordinary email provider and from an unverified address.
 
 **Session**: A time-limited authenticated relationship between a User and a client.
 
@@ -69,7 +77,7 @@ _Avoid_: Global search, unified ranking
 
 **Latest Releases**: A Discovery Shelf containing Media selected by a Provider's genuine release-date-oriented capability. Latest Releases are not inferred by renaming Popular or by applying a client-side sort to an unrelated Provider list.
 
-**Discover Workspace**: The public catalog-browsing surface composed of a selected Media type, one explicit source, a featured item when available, and independent Discovery Shelves. It is distinct from Search, Provider-owned Recommendations, and a User's Library.
+**Discover Workspace**: The public catalog-browsing surface composed of a selected Media type, the server-selected primary Provider policy, a featured item when available, and independent Discovery Shelves. It is distinct from Search, Provider-owned Recommendations, and a User's Library.
 
 **Provider-owned Recommendation**: A Provider-returned list of Media related to an anchor Media entry. It is not personalized from a User's Library and does not promise cross-Provider ranking or identity matching.
 

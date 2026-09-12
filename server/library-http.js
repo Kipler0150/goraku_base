@@ -11,6 +11,7 @@ import {
 const DEFAULT_PAGE = 1;
 const DEFAULT_PER_PAGE = 20;
 const MAX_PER_PAGE = 50;
+const MAX_EPISODE_CHANGES = 2_000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const SUPPORTED_TYPES = Object.freeze({
@@ -131,6 +132,49 @@ function validateLibraryPatchBody(body) {
   }
 
   return details.length > 0 ? { details } : { value };
+}
+
+function validateEpisodeChangesBody(body) {
+  if (!isPlainObject(body)) {
+    return { details: [{ field: 'body', message: 'The body must be a JSON object.' }] };
+  }
+
+  const details = unknownFields(body, new Set(['episodes']));
+  if (!Array.isArray(body.episodes) || body.episodes.length < 1 || body.episodes.length > MAX_EPISODE_CHANGES) {
+    details.push({ field: 'episodes', message: `episodes must contain between 1 and ${MAX_EPISODE_CHANGES} changes.` });
+    return { details };
+  }
+
+  const seen = new Set();
+  const episodes = [];
+  body.episodes.forEach((change, index) => {
+    const field = `episodes[${index}]`;
+    if (!isPlainObject(change)) {
+      details.push({ field, message: 'Each episode change must be a JSON object.' });
+      return;
+    }
+    const keys = Object.keys(change);
+    if (keys.length !== 3 || !['season', 'episode', 'watched'].every((key) => Object.hasOwn(change, key))) {
+      details.push({ field, message: 'Each episode change must contain only season, episode, and watched.' });
+      return;
+    }
+    const validSeason = Number.isSafeInteger(change.season) && change.season >= 1 && change.season <= 1_000;
+    const validEpisode = Number.isSafeInteger(change.episode) && change.episode >= 1 && change.episode <= 10_000;
+    if (!validSeason) details.push({ field: `${field}.season`, message: 'season must be an integer from 1 to 1000.' });
+    if (!validEpisode) details.push({ field: `${field}.episode`, message: 'episode must be an integer from 1 to 10000.' });
+    if (typeof change.watched !== 'boolean') details.push({ field: `${field}.watched`, message: 'watched must be a boolean.' });
+    if (!validSeason || !validEpisode || typeof change.watched !== 'boolean') return;
+
+    const key = `${change.season}:${change.episode}`;
+    if (seen.has(key)) {
+      details.push({ field, message: 'An episode may appear only once per request.' });
+      return;
+    }
+    seen.add(key);
+    episodes.push({ season: change.season, episode: change.episode, watched: change.watched });
+  });
+
+  return details.length > 0 ? { details } : { value: { episodes } };
 }
 
 function validatePositiveInteger(query, field, defaultValue, maximum) {
@@ -270,6 +314,49 @@ export function createLibraryRouter({ libraryRepository, authService, cookieName
     try {
       const item = await libraryRepository.create({ userId: request.user.id, ...validation.value });
       response.location(`/api/library/${item.id}`).status(201).json(item);
+    } catch (error) {
+      handleRepositoryError(response, error);
+    }
+  });
+
+  router.get('/:id/episodes', async (request, response) => {
+    if (validateLibraryId(response, request.params.id)) return;
+    if (!repositoryAvailable(libraryRepository, 'listWatchedEpisodes')) {
+      sendError(response, 503, LIBRARY_UNAVAILABLE);
+      return;
+    }
+
+    try {
+      const result = await libraryRepository.listWatchedEpisodes({ userId: request.user.id, id: request.params.id });
+      if (!result) {
+        notFound(response);
+        return;
+      }
+      response.status(200).json(result);
+    } catch (error) {
+      handleRepositoryError(response, error);
+    }
+  });
+
+  router.put('/:id/episodes', async (request, response) => {
+    if (validateLibraryId(response, request.params.id)) return;
+    if (!repositoryAvailable(libraryRepository, 'updateWatchedEpisodes')) {
+      sendError(response, 503, LIBRARY_UNAVAILABLE);
+      return;
+    }
+    const validation = validateEpisodeChangesBody(request.body);
+    if (validation.details) {
+      sendValidationError(response, validation.details);
+      return;
+    }
+
+    try {
+      const result = await libraryRepository.updateWatchedEpisodes({ userId: request.user.id, id: request.params.id, ...validation.value });
+      if (!result) {
+        notFound(response);
+        return;
+      }
+      response.status(200).json(result);
     } catch (error) {
       handleRepositoryError(response, error);
     }

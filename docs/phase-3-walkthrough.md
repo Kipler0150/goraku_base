@@ -15,7 +15,7 @@ The search surface is a single selector-backed section in `client/src/App.jsx`. 
 
    The browser sends no TMDB token or image-host configuration.
 3. `server/app.js` validates the query. It accepts exactly `anime`, `movie`, or `tv`, rejects repeated or unknown parameters, and enforces provider compatibility before an adapter can be called.
-4. `server/media-search.js` selects the provider. Anime keeps its AniList-primary/MyAnimeList availability fallback. Movie and TV requests select TMDB only and never merge or fall back to another provider.
+4. `server/media-search.js` selects the provider. Anime uses the MyAnimeList-primary/AniList availability fallback. Movie and TV requests select TMDB only and never merge or fall back to another provider.
 5. `server/providers/tmdb.js` builds the provider request. It chooses `/search/movie` or `/search/tv`, sends the server-only Bearer token, fixes the language to `en-US`, forwards the adult-content preference, and applies a bounded timeout.
 6. The adapter converts the provider payload into the shared Media contract. Express returns the normalized page with `source: "tmdb"` and an empty `providerErrors` list.
 7. The hook ignores an older response after a newer query or type selection wins. Later pages append to the current results; a failed later page retains earlier results and exposes a page-specific retry action.

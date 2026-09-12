@@ -101,6 +101,45 @@ describe('media discovery service', () => {
     assert.equal(fallbackCalled, false);
   });
 
+  it('allows only the server-selected Anime discovery path to use the AniList fallback', async () => {
+    const anilistMedia = {
+      ...media,
+      provider: 'anilist',
+      providerId: '1',
+      type: 'ANIME',
+      id: 'anilist:ANIME:1',
+      metadata: { episodeCount: null, episodeDurationMinutes: null }
+    };
+    let fallbackCalls = 0;
+    const service = createMediaDiscoveryService({
+      myanimelistAdapter: { enabled: false },
+      anilistAdapter: {
+        enabled: true,
+        async getTrending(options) {
+          fallbackCalls += 1;
+          assert.equal(options.provider, 'anilist');
+          return { results: [anilistMedia], pagination: { page: 1, perPage: 12, hasMore: false } };
+        }
+      }
+    });
+
+    const result = await service.getTrending({
+      provider: 'myanimelist',
+      type: 'anime',
+      page: 1,
+      perPage: 12,
+      includeAdult: true,
+      allowFallback: true
+    });
+    assert.equal(result.source, 'anilist');
+    assert.equal(fallbackCalls, 1);
+
+    await assert.rejects(
+      service.getTrending({ provider: 'myanimelist', type: 'anime', page: 1, perPage: 12, includeAdult: true }),
+      { code: PROVIDER_ERROR_CODES.UNAVAILABLE }
+    );
+  });
+
   it('rejects malformed adapter pages as safe Provider invalid responses', async () => {
     const service = serviceWith({ enabled: true, async getPopular() { return { results: [{ raw: 'secret' }] }; } });
     await assert.rejects(

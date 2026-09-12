@@ -29,6 +29,13 @@ const FIELDS = [
   'average_episode_duration'
 ].join(',');
 
+const SEASONS = Object.freeze([
+  { throughMonth: 3, name: 'winter' },
+  { throughMonth: 6, name: 'spring' },
+  { throughMonth: 9, name: 'summer' },
+  { throughMonth: 12, name: 'fall' }
+]);
+
 function providerError(code) {
   return new ProviderError(code, ERROR_MESSAGES[code]);
 }
@@ -129,11 +136,11 @@ function normalizeAnime(value) {
       providerRating: mean === null ? null : { value: mean, max: 10 },
       releaseStatus: statusMap[item.status] ?? 'UNKNOWN',
       creators: [],
-        isAdult: normalizeAdultStatus(item.nsfw),
-        metadata: {
-          episodeCount: item.num_episodes ?? null,
-          episodeDurationMinutes: normalizeEpisodeDuration(item.average_episode_duration)
-        }
+      isAdult: normalizeAdultStatus(item.nsfw),
+      metadata: {
+        episodeCount: item.num_episodes ?? null,
+        episodeDurationMinutes: normalizeEpisodeDuration(item.average_episode_duration)
+      }
     });
   } catch (error) {
     if (error instanceof ProviderError) throw error;
@@ -155,12 +162,34 @@ function normalizePayload(payload, page, perPage, includeAdult) {
   };
 }
 
+function normalizeRecommendationsPayload(payload, page, perPage, includeAdult) {
+  const root = assertObject(payload);
+  if (!Array.isArray(root.recommendations)) throw invalidResponse();
+  return {
+    results: root.recommendations
+      .map((entry) => normalizeAnime(assertObject(entry).node))
+      .filter((media) => includeAdult || media.isAdult !== true),
+    pagination: { page, perPage, hasMore: false }
+  };
+}
+
 function errorForStatus(status, isSearchRequest = false) {
   if (!isSearchRequest && status === 404) return providerError(PROVIDER_ERROR_CODES.NOT_FOUND);
   if (status === 403) return providerError(PROVIDER_ERROR_CODES.UNAVAILABLE);
   if (status === 429) return providerError(PROVIDER_ERROR_CODES.RATE_LIMITED);
   if (status === 408 || status === 504) return providerError(PROVIDER_ERROR_CODES.TIMEOUT);
   return providerError(PROVIDER_ERROR_CODES.ERROR);
+}
+
+function currentSeason(clock) {
+  const now = clock();
+  const date = now instanceof Date ? now : new Date(now);
+  if (Number.isNaN(date.getTime())) throw invalidResponse();
+  const month = date.getUTCMonth() + 1;
+  return {
+    year: date.getUTCFullYear(),
+    season: SEASONS.find(({ throughMonth }) => month <= throughMonth).name
+  };
 }
 
 /**
@@ -172,7 +201,8 @@ export function createMyAnimeListAdapter({
   clientId = process.env.MAL_CLIENT_ID,
   request = globalThis.fetch,
   endpoint = MYANIMELIST_ENDPOINT,
-  timeoutMs = MYANIMELIST_TIMEOUT_MS
+  timeoutMs = MYANIMELIST_TIMEOUT_MS,
+  clock = () => new Date()
 } = {}) {
   if (typeof request !== 'function') throw new TypeError('An HTTP request function is required.');
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new RangeError('timeoutMs must be positive.');
@@ -243,11 +273,11 @@ export function createMyAnimeListAdapter({
     async searchAnime(options) {
       return this.searchMedia(options);
     },
-    async getPopular({ page = 1, perPage = 12, includeAdult = true } = {}) {
+    async getRanking(rankingType, { page = 1, perPage = 12, includeAdult = true } = {}) {
       if (!normalizedClientId) throw providerError(PROVIDER_ERROR_CODES.UNAVAILABLE);
       const options = validateDiscoveryOptions({ page, perPage, includeAdult });
       const url = new URL(`${normalizedEndpoint}/ranking`);
-      url.searchParams.set('ranking_type', 'bypopularity');
+      url.searchParams.set('ranking_type', rankingType);
       url.searchParams.set('limit', String(perPage));
       url.searchParams.set('offset', String((page - 1) * perPage));
       url.searchParams.set('fields', FIELDS);
@@ -268,7 +298,33 @@ export function createMyAnimeListAdapter({
       if (!normalizedClientId) throw providerError(PROVIDER_ERROR_CODES.UNAVAILABLE);
       const options = validateDiscoveryOptions({ page, perPage, includeAdult });
       if (typeof providerId !== 'string' || !/^[1-9]\d*$/.test(providerId.trim())) throw invalidResponse();
-      const url = new URL(`${normalizedEndpoint}/${providerId.trim()}/recommendations`);
+      const url = new URL(`${normalizedEndpoint}/${providerId.trim()}`);
+      url.searchParams.set('fields', 'recommendations');
+      const payload = await requestProviderJson({
+        request,
+        url,
+        timeoutMs,
+        options: {
+          method: 'GET',
+          headers: { accept: 'application/json', 'X-MAL-CLIENT-ID': normalizedClientId }
+        },
+        invalidResponse,
+        errorForStatus: (status) => errorForStatus(status)
+      });
+      return normalizeRecommendationsPayload(payload, page, perPage, options.includeAdult);
+    },
+    async getTrending(options) {
+      return this.getRanking('airing', options);
+    },
+    async getPopular(options) {
+      return this.getRanking('bypopularity', options);
+    },
+    async getLatest({ page = 1, perPage = 12, includeAdult = true } = {}) {
+      if (!normalizedClientId) throw providerError(PROVIDER_ERROR_CODES.UNAVAILABLE);
+      const options = validateDiscoveryOptions({ page, perPage, includeAdult });
+      const { year, season } = currentSeason(clock);
+      const url = new URL(`${normalizedEndpoint}/season/${year}/${season}`);
+      url.searchParams.set('sort', 'anime_score');
       url.searchParams.set('limit', String(perPage));
       url.searchParams.set('offset', String((page - 1) * perPage));
       url.searchParams.set('fields', FIELDS);
@@ -281,12 +337,18 @@ export function createMyAnimeListAdapter({
           headers: { accept: 'application/json', 'X-MAL-CLIENT-ID': normalizedClientId }
         },
         invalidResponse,
-        errorForStatus: (status) => errorForStatus(status)
+        errorForStatus: (status) => errorForStatus(status, true)
       });
       return normalizePayload(payload, page, perPage, options.includeAdult);
     },
     getPopularMedia(options) {
       return this.getPopular(options);
+    },
+    getTrendingMedia(options) {
+      return this.getTrending(options);
+    },
+    getLatestMedia(options) {
+      return this.getLatest(options);
     },
     getMediaRecommendations(options) {
       return this.getRecommendations(options);

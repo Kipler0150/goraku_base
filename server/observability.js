@@ -1,6 +1,6 @@
 const DEFAULT_MAX_EVENTS = 1_024;
 const SAFE_CACHE_EVENT_TYPES = new Set(['hit', 'miss', 'in-flight-hit', 'store', 'policy-denied']);
-const SAFE_OPERATIONS = new Set(['search', 'details', 'trending', 'popular', 'latest', 'recommendations']);
+const SAFE_OPERATIONS = new Set(['search', 'details', 'trending', 'popular', 'latest', 'recommendations', 'episodes']);
 const SAFE_PROVIDERS = new Set(['anilist', 'myanimelist', 'tmdb', 'thegamesdb', 'rawg', 'combined']);
 
 function emitSafely(onEvent, event) {

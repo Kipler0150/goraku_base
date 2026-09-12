@@ -18,12 +18,18 @@ import {
   MEDIA_SEARCH_TYPES,
   providersUnavailable
 } from './media-search.js';
+import {
+  createMediaFilterService,
+  FILTERABLE_MEDIA_TYPES,
+  filteredProviderForType
+} from './media-filters.js';
 import { getProvidersForType, PROVIDER_CAPABILITY_MATRIX } from './media-capabilities.js';
 import {
   CAPABILITY_UNSUPPORTED_CODE,
   createMediaDetailsService,
   MediaCapabilityError
 } from './media-details.js';
+import { createMediaEpisodesService } from './media-episodes.js';
 import {
   createMediaDiscoveryService,
   MediaDiscoveryCapabilityError
@@ -44,11 +50,11 @@ const NOT_FOUND_ERROR = {
   details: []
 };
 
-const SEARCH_QUERY_FIELDS = new Set(['type', 'q', 'page', 'perPage', 'includeAdult', 'provider', 'cursor', 'retryProvider']);
+const SEARCH_QUERY_FIELDS = new Set(['type', 'q', 'page', 'perPage', 'includeAdult', 'provider', 'cursor', 'retryProvider', 'genres', 'creator', 'minRating', 'minMetacritic']);
 const MEDIA_DISCOVERY_QUERY_FIELDS = new Set(['type', 'page', 'perPage', 'includeAdult', 'provider']);
 const MEDIA_DETAIL_QUERY_FIELDS = new Set(['includeAdult']);
 const MEDIA_DETAIL_TYPES = new Set(['anime', 'movie', 'tv', 'game']);
-const DEFAULT_DISCOVERY_PROVIDERS = Object.freeze({ anime: 'anilist', movie: 'tmdb', tv: 'tmdb', game: 'thegamesdb' });
+const DEFAULT_DISCOVERY_PROVIDERS = Object.freeze({ anime: 'myanimelist', movie: 'tmdb', tv: 'tmdb', game: 'thegamesdb' });
 
 function validationError(details) {
   return {
@@ -85,16 +91,93 @@ function validateMediaSearchQuery(query) {
     details.push({ field: 'type', message: 'type must be exactly "anime", "movie", "tv", "game", or "all".' });
   }
 
-  let trimmedQuery;
-  if (!hasSingleValue('q') && !Object.hasOwn(searchQuery, 'q')) {
-    details.push({ field: 'q', message: 'q is required.' });
-  } else if (hasSingleValue('q') && typeof searchQuery.q === 'string') {
-    trimmedQuery = searchQuery.q.trim();
-    if (trimmedQuery.length < 1 || trimmedQuery.length > 100) {
+  let trimmedQuery = '';
+  if (Object.hasOwn(searchQuery, 'q')) {
+    if (Array.isArray(searchQuery.q)) {
+      // The shared query loop already reports repeated parameters.
+    } else if (hasSingleValue('q') && typeof searchQuery.q === 'string') {
+      trimmedQuery = searchQuery.q.trim();
+      if (trimmedQuery.length > 100) {
+        details.push({ field: 'q', message: 'q must contain at most 100 characters after trimming.' });
+      }
+    } else {
       details.push({ field: 'q', message: 'q must contain between 1 and 100 characters after trimming.' });
     }
-  } else if (hasSingleValue('q')) {
-    details.push({ field: 'q', message: 'q must contain between 1 and 100 characters after trimming.' });
+  }
+
+  const parseGenres = () => {
+    if (!Object.hasOwn(searchQuery, 'genres')) return [];
+    if (!hasSingleValue('genres') || typeof searchQuery.genres !== 'string' || !searchQuery.genres.trim()) {
+      details.push({ field: 'genres', message: 'genres must contain one or more values separated by |.' });
+      return [];
+    }
+    const values = searchQuery.genres.split('|').map((value) => value.trim());
+    if (values.length > 8 || values.some((value) => !value || value.length > 80)) {
+      details.push({ field: 'genres', message: 'genres must contain between 1 and 8 non-empty values.' });
+      return [];
+    }
+    return values;
+  };
+
+  const genres = parseGenres();
+  let creator;
+  if (Object.hasOwn(searchQuery, 'creator')) {
+    if (!hasSingleValue('creator') || typeof searchQuery.creator !== 'string' || !/^[1-9]\d*$/.test(searchQuery.creator)) {
+      details.push({ field: 'creator', message: 'creator must be a positive decimal Provider ID.' });
+    } else {
+      creator = searchQuery.creator;
+    }
+  }
+
+  const parseDecimal = (field, maximum) => {
+    if (!Object.hasOwn(searchQuery, field)) return undefined;
+    const value = searchQuery[field];
+    if (!hasSingleValue(field) || typeof value !== 'string' || !/^\d+(?:\.\d)?$/.test(value)) {
+      details.push({ field, message: `${field} must be a decimal number from 0 to ${maximum}.` });
+      return undefined;
+    }
+    const parsed = Number(value);
+    if (parsed < 0 || parsed > maximum) {
+      details.push({ field, message: `${field} must be a decimal number from 0 to ${maximum}.` });
+      return undefined;
+    }
+    return parsed;
+  };
+
+  const parseInteger = (field, maximum) => {
+    if (!Object.hasOwn(searchQuery, field)) return undefined;
+    const value = searchQuery[field];
+    if (!hasSingleValue(field) || typeof value !== 'string' || !/^\d+$/.test(value)) {
+      details.push({ field, message: `${field} must be an integer from 0 to ${maximum}.` });
+      return undefined;
+    }
+    const parsed = Number(value);
+    if (parsed < 0 || parsed > maximum) {
+      details.push({ field, message: `${field} must be an integer from 0 to ${maximum}.` });
+      return undefined;
+    }
+    return parsed;
+  };
+
+  const minRating = parseDecimal('minRating', 10);
+  const minMetacritic = parseInteger('minMetacritic', 100);
+  const filters = { genres, creator, minRating, minMetacritic };
+  const filtersActive = Boolean(genres.length || creator || minRating !== undefined || minMetacritic !== undefined);
+
+  if (filtersActive && searchQuery.type === 'all') {
+    details.push({ field: 'filters', message: 'Advanced filters are not supported for type "all".' });
+  }
+  if (filtersActive && !FILTERABLE_MEDIA_TYPES.includes(searchQuery.type)) {
+    details.push({ field: 'filters', message: 'Advanced filters require a specific catalog.' });
+  }
+  if (filtersActive && ['movie', 'tv'].includes(searchQuery.type) && trimmedQuery) {
+    details.push({ field: 'filters', message: 'Clear the title before using advanced filters for movies or TV.' });
+  }
+  if (searchQuery.type === 'game' && minRating !== undefined) {
+    details.push({ field: 'minRating', message: 'minRating is not supported for games; use minMetacritic.' });
+  }
+  if (searchQuery.type !== 'game' && minMetacritic !== undefined) {
+    details.push({ field: 'minMetacritic', message: 'minMetacritic is only supported for games.' });
   }
 
   const parsePositiveInteger = (field, defaultValue, maximum) => {
@@ -137,6 +220,14 @@ function validateMediaSearchQuery(query) {
     }
   }
 
+  if (filtersActive) {
+    const filteredProvider = filteredProviderForType(searchQuery.type);
+    if (provider && provider !== filteredProvider) {
+      details.push({ field: 'provider', message: `provider must be ${filteredProvider} when advanced filters are used.` });
+    }
+    provider = filteredProvider;
+  }
+
   let cursor;
   if (Object.hasOwn(searchQuery, 'cursor')) {
     if (searchQuery.type !== 'all') {
@@ -172,16 +263,19 @@ function validateMediaSearchQuery(query) {
     type: searchQuery.type,
     provider,
     cursor,
-    retryProvider
+    retryProvider,
+    filters
   };
 }
 
-function validateMediaDetailsRequest(params, query, { includePagination = false } = {}) {
+function validateMediaDetailsRequest(params, query, { includePagination = false, includeSeason = false } = {}) {
   const details = [];
   const detailQuery = query && typeof query === 'object' ? query : {};
   const allowedFields = includePagination
     ? new Set(['includeAdult', 'page', 'perPage'])
-    : MEDIA_DETAIL_QUERY_FIELDS;
+    : includeSeason
+      ? new Set(['includeAdult', 'season'])
+      : MEDIA_DETAIL_QUERY_FIELDS;
 
   for (const [field, value] of Object.entries(detailQuery)) {
     if (!allowedFields.has(field)) {
@@ -242,7 +336,20 @@ function validateMediaDetailsRequest(params, query, { includePagination = false 
     perPage = parsePositiveInteger('perPage', 12, 24);
   }
 
+  let season = 1;
+  if (includeSeason && Object.hasOwn(detailQuery, 'season')) {
+    if (Array.isArray(detailQuery.season) || typeof detailQuery.season !== 'string' || !/^[1-9]\d*$/.test(detailQuery.season)) {
+      details.push({ field: 'season', message: 'season must be a positive decimal integer from 1 to 1000.' });
+    } else {
+      season = Number(detailQuery.season);
+      if (season > 1_000) {
+        details.push({ field: 'season', message: 'season must be a positive decimal integer from 1 to 1000.' });
+      }
+    }
+  }
+
   if (details.length > 0) return validationError(details);
+  if (includeSeason) return { provider, type, providerId, season, includeAdult };
   return includePagination
     ? { provider, type, providerId, page, perPage, includeAdult }
     : { provider, type, providerId, includeAdult };
@@ -340,10 +447,11 @@ function discoveryFailureResponse(response, error, provider) {
 export function createApp({
   enableTestErrorRoute = false,
   databasePool = null,
-  authService = databasePool ? createAuthService({ pool: databasePool }) : null,
+  appOrigin = process.env.APP_ORIGIN ?? DEFAULT_APP_ORIGIN,
+  emailDelivery = null,
+  authService = databasePool ? createAuthService({ pool: databasePool, appOrigin, emailDelivery }) : null,
   libraryRepository = databasePool ? createLibraryRepository({ pool: databasePool }) : null,
   tagsCollectionsRepository = databasePool ? createTagsCollectionsRepository({ pool: databasePool }) : null,
-  appOrigin = process.env.APP_ORIGIN ?? DEFAULT_APP_ORIGIN,
   secureCookies = process.env.NODE_ENV === 'production',
   trustProxy = undefined,
   rateLimit = {},
@@ -356,8 +464,10 @@ export function createApp({
   thegamesdbAdapter = createTheGamesDBAdapter(),
   rawgAdapter = createRAWGAdapter(),
   mediaDetailsService = null,
+  mediaEpisodesService = null,
   mediaDiscoveryService = null,
-  mediaMetadataCache = null
+  mediaMetadataCache = null,
+  mediaFilterService = null
 } = {}) {
   const app = express();
   const signals = runtimeSignals ?? createRuntimeSignals({ onEvent: onRuntimeEvent ?? undefined });
@@ -393,6 +503,7 @@ export function createApp({
   });
   const mediaDiscoveryWasInjected = mediaDiscoveryService !== null;
   const mediaDetailsWasInjected = mediaDetailsService !== null;
+  const mediaEpisodesWasInjected = mediaEpisodesService !== null;
   const cache = mediaMetadataCache ?? createMediaMetadataCache({ onEvent: recordCacheEvent });
   const mediaSearch = createMediaSearchService({
     anilistAdapter,
@@ -402,7 +513,21 @@ export function createApp({
     rawgAdapter,
     onProviderRequest: recordProviderRequest
   });
+  const mediaFilters = mediaFilterService ?? createMediaFilterService({
+    anilistAdapter,
+    tmdbAdapter,
+    rawgAdapter,
+    onProviderRequest: recordProviderRequest
+  });
   const mediaDetails = mediaDetailsService ?? createMediaDetailsService({
+    anilistAdapter,
+    myanimelistAdapter,
+    tmdbAdapter,
+    thegamesdbAdapter,
+    rawgAdapter,
+    onProviderRequest: recordProviderRequest
+  });
+  const mediaEpisodes = mediaEpisodesService ?? createMediaEpisodesService({
     anilistAdapter,
     myanimelistAdapter,
     tmdbAdapter,
@@ -435,7 +560,7 @@ export function createApp({
   app.use('/api', createMutationOriginMiddleware({ appOrigin }));
   app.use(express.json());
 
-  app.use('/api/auth', createAuthRouter({ authService, secureCookies }));
+  app.use('/api/auth', createAuthRouter({ authService, appOrigin, secureCookies }));
   app.use('/api/library', createLibraryRouter({ libraryRepository, authService }));
   app.use('/api', createTagsCollectionsRouter({ tagsCollectionsRepository, authService }));
 
@@ -468,7 +593,7 @@ export function createApp({
         load: () => mediaSearch.search(validated)
       });
       response.status(200).json(result);
-    } catch (error) {
+      } catch (error) {
       if (error?.validationDetails) {
         const validation = validationError(error.validationDetails);
         response.status(validation.status).json(validation.body);
@@ -478,8 +603,58 @@ export function createApp({
         combinedFailureResponse(response, error.mediaType ?? validated.type);
         return;
       }
-      const defaultProvider = validated.type === 'anime' ? 'anilist' : validated.type === 'game' ? 'thegamesdb' : 'tmdb';
+      const defaultProvider = validated.type === 'anime' ? 'myanimelist' : validated.type === 'game' ? 'thegamesdb' : 'tmdb';
       providerFailureResponse(response, error, error?.provider ?? validated.provider ?? defaultProvider);
+    }
+  });
+
+  app.get('/api/media/filter-options', async (request, response) => {
+    const details = [];
+    const query = request.query && typeof request.query === 'object' ? request.query : {};
+    const allowed = new Set(['type', 'creatorQuery', 'includeAdult']);
+    for (const [field, value] of Object.entries(query)) {
+      if (!allowed.has(field)) details.push({ field, message: 'Unknown query parameter.' });
+      if (Array.isArray(value)) details.push({ field, message: 'Query parameters may only appear once.' });
+    }
+    const type = query.type;
+    if (typeof type !== 'string' || !FILTERABLE_MEDIA_TYPES.includes(type)) {
+      details.push({ field: 'type', message: 'type must be exactly "anime", "movie", "tv", or "game".' });
+    }
+    let creatorQuery = '';
+    if (Object.hasOwn(query, 'creatorQuery')) {
+      if (Array.isArray(query.creatorQuery) || typeof query.creatorQuery !== 'string' || query.creatorQuery.trim().length > 100) {
+        details.push({ field: 'creatorQuery', message: 'creatorQuery must contain at most 100 characters.' });
+      } else {
+        creatorQuery = query.creatorQuery.trim();
+      }
+    }
+    let includeAdult = true;
+    if (Object.hasOwn(query, 'includeAdult')) {
+      if (Array.isArray(query.includeAdult) || !['true', 'false'].includes(query.includeAdult)) {
+        details.push({ field: 'includeAdult', message: 'includeAdult must be true or false.' });
+      } else {
+        includeAdult = query.includeAdult === 'true';
+      }
+    }
+    if (details.length > 0) {
+      const validation = validationError(details);
+      response.status(validation.status).json(validation.body);
+      return;
+    }
+    const provider = filteredProviderForType(type);
+    try {
+      const options = await mediaFilters.getOptions({ type, creatorQuery, includeAdult });
+      response.status(200).json({
+        type,
+        source: provider,
+        genres: Array.isArray(options?.genres) ? options.genres : [],
+        creators: Array.isArray(options?.creators) ? options.creators : [],
+        rating: options?.rating ?? (type === 'game'
+          ? { field: 'minMetacritic', label: 'Minimum Metacritic', max: 100, step: 1 }
+          : { field: 'minRating', label: 'Minimum Provider Rating', max: 10, step: 0.5 })
+      });
+    } catch (error) {
+      providerFailureResponse(response, error, provider);
     }
   });
 
@@ -492,13 +667,14 @@ export function createApp({
 
     try {
       const cacheOperation = operation.replace(/^get/, '').toLowerCase();
+      const allowAnimeFallback = !Object.hasOwn(request.query, 'provider');
       const result = await cachedMediaResponse({
         provider: validated.provider,
         type: validated.type,
         operation: cacheOperation,
         request: validated,
         providerRequestFallback: mediaDiscoveryWasInjected,
-        load: () => mediaDiscovery[operation](validated)
+        load: () => mediaDiscovery[operation]({ ...validated, allowFallback: allowAnimeFallback })
       });
       response.status(200).json(result);
     } catch (error) {
@@ -531,6 +707,39 @@ export function createApp({
       discoveryFailureResponse(response, error, validated.provider);
     }
   });
+
+  app.get('/api/media/:provider/:type/:id/episodes', async (request, response) => {
+    const validated = validateMediaDetailsRequest(request.params, request.query, { includeSeason: true });
+    if (validated.status) {
+      response.status(validated.status).json(validated.body);
+      return;
+    }
+
+    try {
+      const result = await cachedMediaResponse({
+        provider: validated.provider,
+        type: validated.type,
+        operation: 'episodes',
+        request: validated,
+        providerRequestFallback: mediaEpisodesWasInjected,
+        load: () => mediaEpisodes.getEpisodes(validated)
+      });
+      response.status(200).json(result);
+    } catch (error) {
+      if (error instanceof MediaCapabilityError || error?.code === CAPABILITY_UNSUPPORTED_CODE) {
+        sendErrorResponse(response, 501, {
+          code: CAPABILITY_UNSUPPORTED_CODE,
+          message: 'This Provider does not support the requested operation.'
+        });
+        return;
+      }
+      if (error?.code === 'PROVIDER_NOT_FOUND') {
+        sendErrorResponse(response, 404, NOT_FOUND_ERROR);
+        return;
+      }
+      providerFailureResponse(response, error, validated.type === 'anime' ? 'anilist' : validated.provider);
+    }
+    });
 
   app.get('/api/media/:provider/:type/:id', async (request, response) => {
     const validated = validateMediaDetailsRequest(request.params, request.query);
@@ -579,6 +788,15 @@ export function createApp({
   });
 
   app.use((error, _request, response, _next) => {
+    if (error?.type === 'entity.too.large') {
+      sendErrorResponse(response, 413, {
+        code: 'AVATAR_TOO_LARGE',
+        message: 'Profile pictures must be 2 MB or smaller.',
+        details: []
+      });
+      return;
+    }
+
     if (error?.type === 'entity.parse.failed' || (error instanceof SyntaxError && error.status === 400)) {
       sendErrorResponse(response, 400, {
         code: 'VALIDATION_ERROR',

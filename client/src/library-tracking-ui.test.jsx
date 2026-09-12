@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import App from './App.jsx';
 import { selectView, openTracking } from './test-navigation.js';
 
-const USER = { id: 'user-1', email: 'reader@example.com' };
+const USER = { id: 'user-1', username: 'reader', email: 'reader@example.com' };
 const IDS = {
   movie: '00000000-0000-4000-8000-000000000001',
   anime: '00000000-0000-4000-8000-000000000002',
@@ -52,6 +52,10 @@ function installBaseFetch({
   libraryCreateResponse,
   onLibraryPatch,
   libraryPatchResponse,
+  mediaDetailsResponse,
+  mediaEpisodesResponse,
+  watchedEpisodesResponse,
+  watchedEpisodesUpdateResponse,
   searchResponse,
   taxonomyListResponse,
   onTaxonomyRequest
@@ -81,9 +85,17 @@ function installBaseFetch({
       currentItems = currentItems.map((entry) => entry.id === id ? updated : entry);
       return Promise.resolve(response(updated));
     }
+    if (url.startsWith('/api/library/') && url.endsWith('/episodes') && options.method === 'GET') {
+      return Promise.resolve(watchedEpisodesResponse?.(url) ?? response({ watched: [] }));
+    }
+    if (url.startsWith('/api/library/') && url.endsWith('/episodes') && options.method === 'PUT') {
+      return Promise.resolve(watchedEpisodesUpdateResponse?.(url, JSON.parse(options.body)) ?? response({ watched: [] }));
+    }
     if (url === '/api/library' && options.method === 'POST' && libraryCreateResponse) {
       return Promise.resolve(libraryCreateResponse(JSON.parse(options.body)));
     }
+    if (url.includes('/episodes?') && mediaEpisodesResponse) return Promise.resolve(mediaEpisodesResponse(url));
+    if (url.startsWith('/api/media/') && mediaDetailsResponse) return Promise.resolve(mediaDetailsResponse(url));
     if (url.startsWith('/api/media/search?') && searchResponse) return Promise.resolve(searchResponse(url));
     if (url.startsWith('/api/tags?') && options.method === 'GET') {
       return Promise.resolve(taxonomyListResponse?.('tag', new URL(url, 'http://localhost')) ?? response({ results: currentTags, pagination: { page: 1, perPage: 50, hasMore: false } }));
@@ -123,7 +135,7 @@ describe('authenticated Library tracking UI', () => {
     expect(screen.getByLabelText('Episode')).toBeInTheDocument();
     expect(screen.getByLabelText('Watched')).toBeInTheDocument();
     expect(screen.getByLabelText('Hours played')).toBeInTheDocument();
-    expect(screen.getAllByText('Unrated on a 0–10 scale.')).toHaveLength(4);
+    expect(screen.queryByText('Unrated on a 0–10 scale.')).not.toBeInTheDocument();
 
     const movieItem = screen.getByRole('heading', { name: '42' }).closest('li');
     const animeEpisodes = screen.getByLabelText('Episodes watched');
@@ -142,16 +154,16 @@ describe('authenticated Library tracking UI', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(`/api/library/${IDS.movie}`, expect.objectContaining({ body: JSON.stringify({ progress: { watched: true } }) })));
     fireEvent.change(screen.getByLabelText('Episodes watched'), { target: { value: '' } });
     fireEvent.submit(screen.getByLabelText('Episodes watched').closest('form'));
-    expect(screen.getByRole('alert')).toHaveTextContent('Enter a valid progress value before saving.');
+    expect(within(animeEpisodes.closest('form')).getByRole('alert')).toHaveTextContent('Enter a valid progress value before saving.');
     fireEvent.click(within(movieItem).getByRole('button', { name: 'Rate 7 out of 10' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(`/api/library/${IDS.movie}`, expect.objectContaining({ body: JSON.stringify({ personalRating: 7 }) })));
     await waitFor(() => expect(screen.getByRole('group', { name: 'Personal rating, 7 out of 10.' })).toBeInTheDocument());
-    fireEvent.click(within(movieItem).getByRole('button', { name: 'Rate 0 out of 10' }));
+    fireEvent.click(within(movieItem).getByRole('button', { name: 'Reset' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(`/api/library/${IDS.movie}`, expect.objectContaining({ body: JSON.stringify({ personalRating: 0 }) })));
     fireEvent.click(within(movieItem).getByRole('button', { name: 'Clear rating / mark unrated' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(`/api/library/${IDS.movie}`, expect.objectContaining({ body: JSON.stringify({ personalRating: null }) })));
 
-    const movieNote = screen.getByLabelText('Note for TMDB movie 42');
+    const movieNote = within(movieItem).getByLabelText('Note');
     fireEvent.change(movieNote, { target: { value: 'Keep the commentary cut.' } });
     fireEvent.submit(movieNote.closest('form'));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(`/api/library/${IDS.movie}`, expect.objectContaining({ body: JSON.stringify({ note: 'Keep the commentary cut.' }) })));
@@ -165,6 +177,120 @@ describe('authenticated Library tracking UI', () => {
     const gameItem = screen.getByRole('heading', { name: '200' }).closest('li');
     fireEvent.click(within(gameItem).getByRole('button', { name: 'Clear progress' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(`/api/library/${IDS.game}`, expect.objectContaining({ body: JSON.stringify({ progress: null }) })));
+  });
+
+  it('renders TV episode tracking inside the Library Item editor and persists watched changes', async () => {
+    const tvDetails = {
+      provider: 'tmdb',
+      providerId: TV.providerId,
+      type: 'TV',
+      id: `tmdb:TV:${TV.providerId}`,
+      title: 'Game of Thrones',
+      originalTitle: null,
+      alternativeTitles: [],
+      description: 'A normalized description.',
+      image: null,
+      bannerImage: null,
+      releaseDate: { year: 2011, month: 4, day: 17 },
+      genres: ['Drama'],
+      providerRating: { value: 9, max: 10, normalized: 9 },
+      releaseStatus: 'RELEASED',
+      creators: [],
+      isAdult: false,
+      metadata: { seasonCount: 2, episodeCount: 20 }
+    };
+    const episodePayload = {
+      provider: 'tmdb',
+      providerId: TV.providerId,
+      type: 'TV',
+      season: 1,
+      episodes: [
+        { number: 1, title: 'Winter Is Coming', airDate: { year: 2011, month: 4, day: 17 }, runtimeMinutes: 62, image: null },
+        { number: 2, title: 'The Kingsroad', airDate: { year: 2011, month: 4, day: 24 }, runtimeMinutes: 56, image: null }
+      ]
+    };
+    const fetchMock = installBaseFetch({
+      libraryItems: [TV],
+      mediaDetailsResponse: (url) => url.startsWith('/api/media/tmdb/tv/100?') ? response(tvDetails) : response({}),
+      mediaEpisodesResponse: () => response(episodePayload),
+      watchedEpisodesResponse: () => response({ watched: [{ season: 1, episode: 1 }] }),
+      watchedEpisodesUpdateResponse: () => response({ watched: [{ season: 1, episode: 1 }, { season: 1, episode: 2 }] })
+    });
+    render(<App />);
+    selectView('My Library');
+
+    const itemCard = (await screen.findByRole('heading', { name: 'Game of Thrones' })).closest('li');
+    fireEvent.click(within(itemCard).getByText('Edit tracking'));
+    const episodeSection = await within(itemCard).findByRole('region', { name: 'Episodes' });
+    expect(await within(episodeSection).findByText('1 of 2 watched')).toBeInTheDocument();
+    expect(within(episodeSection).getByText('Episode 1: Winter Is Coming')).toBeInTheDocument();
+    expect(within(episodeSection).getByText('Episode 2: The Kingsroad')).toBeInTheDocument();
+
+    const episodeCheckboxes = within(episodeSection).getAllByRole('checkbox');
+    fireEvent.click(episodeCheckboxes[1]);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(`/api/library/${IDS.tv}/episodes`, expect.objectContaining({
+      method: 'PUT',
+      body: JSON.stringify({ episodes: [{ season: 1, episode: 2, watched: true }] })
+    })));
+    expect(await within(episodeSection).findByText('2 of 2 watched')).toBeInTheDocument();
+  });
+
+  it('renders AniList-backed anime episode tracking for MyAnimeList library items', async () => {
+    const animeItem = item({ id: IDS.anime, type: 'ANIME', provider: 'myanimelist', providerId: '1535' });
+    const animeDetails = {
+      provider: 'myanimelist',
+      providerId: animeItem.providerId,
+      type: 'ANIME',
+      id: 'myanimelist:ANIME:1535',
+      title: 'Death Note',
+      originalTitle: null,
+      alternativeTitles: [],
+      description: 'A normalized anime description.',
+      image: null,
+      bannerImage: null,
+      releaseDate: { year: 2006, month: 10, day: 4 },
+      genres: ['Mystery'],
+      providerRating: { value: 87, max: 100, normalized: 8.7 },
+      releaseStatus: 'RELEASED',
+      creators: [],
+      isAdult: false,
+      metadata: { episodeCount: 2, episodeDurationMinutes: 23 }
+    };
+    const episodePayload = {
+      provider: 'myanimelist',
+      providerId: animeItem.providerId,
+      type: 'ANIME',
+      season: 1,
+      episodes: [
+        { number: 1, title: 'Episode 1', airDate: null, runtimeMinutes: null, image: null },
+        { number: 2, title: 'Episode 2', airDate: null, runtimeMinutes: null, image: null }
+      ]
+    };
+    const fetchMock = installBaseFetch({
+      libraryItems: [animeItem],
+      mediaDetailsResponse: (url) => url.startsWith('/api/media/myanimelist/anime/1535?') ? response(animeDetails) : response({}),
+      mediaEpisodesResponse: () => response(episodePayload),
+      watchedEpisodesResponse: () => response({ watched: [{ season: 1, episode: 1 }] }),
+      watchedEpisodesUpdateResponse: () => response({ watched: [{ season: 1, episode: 1 }, { season: 1, episode: 2 }] })
+    });
+    render(<App />);
+    selectView('My Library');
+
+    const itemCard = (await screen.findByRole('heading', { name: 'Death Note' })).closest('li');
+    fireEvent.click(within(itemCard).getByText('Edit tracking'));
+    const episodeSection = await within(itemCard).findByRole('region', { name: 'Episodes' });
+    expect(await within(episodeSection).findByText('1 of 2 watched')).toBeInTheDocument();
+    expect(within(episodeSection).getByText('Episode 1', { exact: true })).toBeInTheDocument();
+    expect(within(episodeSection).getByText('Episode 2', { exact: true })).toBeInTheDocument();
+    expect(within(episodeSection).queryByText('Air date unavailable')).not.toBeInTheDocument();
+    expect(within(episodeSection).queryByText('Episode 1: Episode 1')).not.toBeInTheDocument();
+
+    fireEvent.click(within(episodeSection).getAllByRole('checkbox')[1]);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(`/api/library/${IDS.anime}/episodes`, expect.objectContaining({
+      method: 'PUT',
+      body: JSON.stringify({ episodes: [{ season: 1, episode: 2, watched: true }] })
+    })));
+    expect(await within(episodeSection).findByText('2 of 2 watched')).toBeInTheDocument();
   });
 
   it('creates, renames, attaches, detaches, and deletes Tags and Collections', async () => {
@@ -187,12 +313,12 @@ describe('authenticated Library tracking UI', () => {
     fireEvent.click(await screen.findByText('Organize Tags & Collections'));
     await screen.findByRole('heading', { name: '42' });
     openTracking();
-    const tagInput = await screen.findByLabelText('Create Tag');
+    const tagInput = await screen.findByLabelText('New tag name');
     fireEvent.change(tagInput, { target: { value: 'Favorites' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create Tag' }));
     expect(await screen.findByRole('checkbox', { name: 'Favorites' })).toBeInTheDocument();
 
-    const collectionInput = screen.getByLabelText('Create Collection');
+    const collectionInput = screen.getByLabelText('New collection name');
     fireEvent.change(collectionInput, { target: { value: 'Weekend queue' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create Collection' }));
     expect(await screen.findByDisplayValue('Weekend queue')).toBeInTheDocument();
@@ -201,6 +327,8 @@ describe('authenticated Library tracking UI', () => {
     fireEvent.change(tagName, { target: { value: 'Keepers' } });
     fireEvent.click(within(tagName.closest('form')).getByRole('button', { name: 'Rename' }));
     expect(await screen.findByDisplayValue('Keepers')).toBeInTheDocument();
+    expect(within(tagName.closest('form')).getByRole('button', { name: 'Rename' })).toHaveClass('taxonomy-resource__action');
+    expect(screen.getByRole('button', { name: 'Delete tag Keepers' })).toHaveClass('taxonomy-resource__action');
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Keepers' }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(`/api/library/${IDS.movie}/tags/${tag.id}`, expect.objectContaining({ method: 'PUT' })));
@@ -267,7 +395,7 @@ describe('authenticated Library tracking UI', () => {
 
     fireEvent.click(await screen.findByText('Organize Tags & Collections'));
     openTracking();
-    const tagInput = screen.getByLabelText('Create Tag');
+    const tagInput = screen.getByLabelText('New tag name');
     fireEvent.change(tagInput, { target: { value: 'Favorites' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create Tag' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Tag name is already in use.');
@@ -285,7 +413,7 @@ describe('authenticated Library tracking UI', () => {
 
     await screen.findByRole('heading', { name: '42' });
     openTracking();
-    const status = await screen.findByLabelText('Library status for TMDB movie 42');
+    const status = await screen.findByLabelText('Library Status for TMDB movie 42');
     const favorite = screen.getByRole('checkbox', { name: 'Favorite TMDB movie 42' });
     fireEvent.change(status, { target: { value: 'COMPLETED' } });
     await waitFor(() => expect(status).toBeDisabled());
@@ -319,7 +447,7 @@ describe('authenticated Library tracking UI', () => {
     selectView('My Library');
     await screen.findByRole('heading', { name: '42' });
     openTracking();
-    const status = await screen.findByLabelText('Library status for TMDB movie 42');
+    const status = await screen.findByLabelText('Library Status for TMDB movie 42');
     fireEvent.change(status, { target: { value: 'COMPLETED' } });
     expect(await screen.findAllByText('Library item changed elsewhere.')).not.toHaveLength(0);
     expect(status).toHaveValue('PLANNING');
@@ -353,7 +481,7 @@ describe('authenticated Library tracking UI', () => {
     fireEvent.submit(search.closest('form'));
     const save = await screen.findByRole('button', { name: 'Save to library' });
     fireEvent.click(save);
-    expect(await screen.findByRole('button', { name: 'Saved to library' })).toBeDisabled();
+    expect(await screen.findByRole('button', { name: 'Remove from library' })).toBeInTheDocument();
   });
 
   it('does not expose private tracking controls to an unauthenticated visitor', async () => {
@@ -365,7 +493,7 @@ describe('authenticated Library tracking UI', () => {
     selectView('My Library');
 
     expect(await screen.findByText('Sign in to see your library.')).toBeInTheDocument();
-    expect(screen.queryByText('Filter the signal.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Filter')).not.toBeInTheDocument();
     expect(screen.queryByText('Shape your signal.')).not.toBeInTheDocument();
     selectView('Search');
     expect(screen.getByRole('searchbox', { name: 'Search anime by title' })).toBeInTheDocument();

@@ -49,7 +49,7 @@ describe('anime search HTTP API', () => {
     assert.equal(PROVIDER_ERROR_CODES, SHARED_PROVIDER_ERROR_CODES);
   });
 
-  it('validates the query and does not call AniList for invalid parameters', async () => {
+  it('allows a blank query while still rejecting invalid parameters', async () => {
     const mock = createMockAdapter();
     const app = createApp({ anilistAdapter: mock.adapter });
 
@@ -62,8 +62,7 @@ describe('anime search HTTP API', () => {
         code: 'VALIDATION_ERROR',
         message: 'The request query parameters are invalid.',
         details: [
-          { field: 'type', message: 'type must be exactly "anime", "movie", "tv", "game", or "all".' },
-          { field: 'q', message: 'q must contain between 1 and 100 characters after trimming.' }
+          { field: 'type', message: 'type must be exactly "anime", "movie", "tv", "game", or "all".' }
         ]
       }
     });
@@ -113,7 +112,7 @@ describe('anime search HTTP API', () => {
     assert.equal(response.status, 200);
     assert.deepEqual(response.body, {
       results: [],
-      source: 'anilist',
+      source: 'myanimelist',
       pagination: { page: 1, perPage: 12, hasMore: false },
       providerErrors: []
     });
@@ -123,10 +122,10 @@ describe('anime search HTTP API', () => {
 
   it('forwards normalized search options and returns the documented success shape', async () => {
     const media = {
-      provider: 'anilist',
+      provider: 'myanimelist',
       providerId: '1',
       type: 'ANIME',
-      id: 'anilist:ANIME:1',
+      id: 'myanimelist:ANIME:1',
       title: 'Naruto',
       originalTitle: null,
       alternativeTitles: [],
@@ -145,7 +144,7 @@ describe('anime search HTTP API', () => {
       results: [media],
       pagination: { page: 3, perPage: 2, hasMore: true }
     });
-    const app = createApp({ anilistAdapter: mock.adapter });
+    const app = createApp({ myanimelistAdapter: { enabled: true, ...mock.adapter } });
 
     const response = await request(app)
       .get('/api/media/search?type=anime&q=%20naruto%20&page=3&perPage=2&includeAdult=false');
@@ -153,7 +152,7 @@ describe('anime search HTTP API', () => {
     assert.equal(response.status, 200);
     assert.deepEqual(response.body, {
       results: [media],
-      source: 'anilist',
+      source: 'myanimelist',
       pagination: { page: 3, perPage: 2, hasMore: true },
       providerErrors: []
     });
@@ -167,7 +166,7 @@ describe('anime search HTTP API', () => {
 
   it('defaults adult content and pagination values, including an empty result page', async () => {
     const mock = createMockAdapter();
-    const app = createApp({ anilistAdapter: mock.adapter });
+    const app = createApp({ myanimelistAdapter: { enabled: true, ...mock.adapter } });
 
     const response = await request(app)
       .get('/api/media/search?type=anime&q=missing');
@@ -175,7 +174,7 @@ describe('anime search HTTP API', () => {
     assert.equal(response.status, 200);
     assert.deepEqual(response.body, {
       results: [],
-      source: 'anilist',
+      source: 'myanimelist',
       pagination: { page: 1, perPage: 12, hasMore: false },
       providerErrors: []
     });
@@ -187,13 +186,73 @@ describe('anime search HTTP API', () => {
     }]);
   });
 
+  it('loads latest releases when the typed search query is blank', async () => {
+    const calls = { anime: [], tmdb: [], game: [] };
+    const latest = (type) => ({
+      async getLatest(options) {
+        calls[type].push(options);
+        return { results: [type], pagination: { page: options.page, perPage: options.perPage, hasMore: false } };
+      }
+    });
+    const tmdb = {
+      async getLatest(options) {
+        calls.tmdb.push(options);
+        return { results: [options.type], pagination: { page: options.page, perPage: options.perPage, hasMore: false } };
+      }
+    };
+    const app = createApp({
+      anilistAdapter: { enabled: false },
+      myanimelistAdapter: latest('anime'),
+      tmdbAdapter: tmdb,
+      rawgAdapter: latest('game'),
+      thegamesdbAdapter: { enabled: false }
+    });
+
+    for (const type of ['anime', 'movie', 'tv', 'game']) {
+      const response = await request(app).get(`/api/media/search?type=${type}`);
+      assert.equal(response.status, 200);
+      assert.equal(response.body.source, type === 'anime' ? 'myanimelist' : type === 'game' ? 'rawg' : 'tmdb');
+      assert.deepEqual(response.body.results, [type]);
+    }
+
+    assert.equal(calls.anime.length, 1);
+    assert.equal(calls.tmdb.length, 2);
+    assert.equal(calls.game.length, 1);
+    assert.equal(calls.tmdb[0].type, 'movie');
+    assert.equal(calls.tmdb[1].type, 'tv');
+  });
+
+  it('passes blank filtered searches through the provider filter routes', async () => {
+    const anilistCalls = [];
+    const rawgCalls = [];
+    const result = { results: [], pagination: { page: 1, perPage: 12, hasMore: false } };
+    const app = createApp({
+      anilistAdapter: { async searchAnime(options) { anilistCalls.push(options); return result; } },
+      myanimelistAdapter: { enabled: false },
+      rawgAdapter: { async searchMedia(options) { rawgCalls.push(options); return result; } },
+      thegamesdbAdapter: { enabled: false }
+    });
+
+    const animeResponse = await request(app).get('/api/media/search?type=anime&genres=Action');
+    const gameResponse = await request(app).get('/api/media/search?type=game&minMetacritic=80');
+
+    assert.equal(animeResponse.status, 200);
+    assert.equal(gameResponse.status, 200);
+    assert.equal(anilistCalls[0].query, '');
+    assert.deepEqual(anilistCalls[0].filters.genres, ['Action']);
+    assert.equal(rawgCalls[0].query, '');
+    assert.equal(rawgCalls[0].filters.minMetacritic, 80);
+  });
+
   it('returns safe 503 provider errors without upstream details', async () => {
     const app = createApp({
-      anilistAdapter: {
+      myanimelistAdapter: {
+        enabled: true,
         async searchAnime() {
           throw new ProviderError(PROVIDER_ERROR_CODES.UNAVAILABLE);
         }
-      }
+      },
+      anilistAdapter: { enabled: false }
     });
 
     const response = await request(app)
@@ -211,7 +270,7 @@ describe('anime search HTTP API', () => {
 
   it('maps unexpected provider failures to a stable safe 503 envelope', async () => {
     const app = createApp({
-      anilistAdapter: {
+      myanimelistAdapter: {
         async searchAnime() {
           throw new Error('private upstream diagnostic');
         }
@@ -225,21 +284,21 @@ describe('anime search HTTP API', () => {
     assert.deepEqual(response.body, {
       error: {
         code: 'PROVIDER_ERROR',
-        message: 'AniList request failed.',
+        message: 'MyAnimeList request failed.',
         details: []
       }
     });
     assert.equal(JSON.stringify(response.body).includes('private upstream diagnostic'), false);
   });
 
-  it('falls back to MyAnimeList only for AniList unavailability and records the source', async () => {
+  it('uses MyAnimeList as the primary Anime provider without calling AniList', async () => {
     const anilistCalls = [];
     const myanimelistCalls = [];
     const app = createApp({
       anilistAdapter: {
         async searchAnime(options) {
           anilistCalls.push(options);
-          throw new ProviderError(PROVIDER_ERROR_CODES.UNAVAILABLE);
+          throw new Error('AniList should not be called while MyAnimeList is available');
         }
       },
       myanimelistAdapter: {
@@ -254,22 +313,66 @@ describe('anime search HTTP API', () => {
       }
     });
 
-    const response = await request(app)
-      .get('/api/media/search?type=anime&q=offline');
+    const response = await request(app).get('/api/media/search?type=anime&q=offline');
 
     assert.equal(response.status, 200);
     assert.deepEqual(response.body, {
       results: [],
       source: 'myanimelist',
       pagination: { page: 1, perPage: 12, hasMore: false },
+      providerErrors: []
+    });
+    assert.equal(anilistCalls.length, 0);
+    assert.deepEqual(myanimelistCalls, [{
+      query: 'offline',
+      page: 1,
+      perPage: 12,
+      includeAdult: true
+    }]);
+  });
+
+  it('falls back to AniList only for MyAnimeList unavailability and records the source', async () => {
+    const anilistCalls = [];
+    const myanimelistCalls = [];
+    const app = createApp({
+      myanimelistAdapter: {
+        enabled: true,
+        async searchAnime(options) {
+          myanimelistCalls.push(options);
+          throw new ProviderError(PROVIDER_ERROR_CODES.UNAVAILABLE);
+        }
+      },
+      anilistAdapter: {
+        async searchAnime(options) {
+          anilistCalls.push(options);
+          return {
+            results: [],
+            pagination: { page: options.page, perPage: options.perPage, hasMore: false }
+          };
+        }
+      }
+    });
+
+    const response = await request(app).get('/api/media/search?type=anime&q=offline');
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, {
+      results: [],
+      source: 'anilist',
+      pagination: { page: 1, perPage: 12, hasMore: false },
       providerErrors: [{
-        provider: 'anilist',
+        provider: 'myanimelist',
         code: 'PROVIDER_UNAVAILABLE',
-        message: 'AniList is currently unavailable.'
+        message: 'MyAnimeList is currently unavailable.'
       }]
     });
-    assert.equal(anilistCalls.length, 1);
     assert.deepEqual(myanimelistCalls, [{
+      query: 'offline',
+      page: 1,
+      perPage: 12,
+      includeAdult: true
+    }]);
+    assert.deepEqual(anilistCalls, [{
       query: 'offline',
       page: 1,
       perPage: 12,
@@ -338,21 +441,21 @@ describe('anime search HTTP API', () => {
     assert.equal(JSON.stringify(response.body).includes('private MAL diagnostic'), false);
   });
 
-  it('does not fallback for AniList timeouts and returns a safe combined failure when both providers fail', async () => {
-    let myanimelistCalls = 0;
+  it('does not fallback for MyAnimeList timeouts and returns a safe combined failure when both providers fail', async () => {
+    let anilistCalls = 0;
     const timeoutApp = createApp({
-      anilistAdapter: { async searchAnime() { throw new ProviderError(PROVIDER_ERROR_CODES.TIMEOUT); } },
-      myanimelistAdapter: { enabled: true, async searchAnime() { myanimelistCalls += 1; return {}; } }
+      myanimelistAdapter: { enabled: true, async searchAnime() { throw new ProviderError(PROVIDER_ERROR_CODES.TIMEOUT); } },
+      anilistAdapter: { async searchAnime() { anilistCalls += 1; return {}; } }
     });
     const timeoutResponse = await request(timeoutApp)
       .get('/api/media/search?type=anime&q=slow');
     assert.equal(timeoutResponse.status, 503);
     assert.equal(timeoutResponse.body.error.code, 'PROVIDER_TIMEOUT');
-    assert.equal(myanimelistCalls, 0);
+    assert.equal(anilistCalls, 0);
 
     const bothFailApp = createApp({
-      anilistAdapter: { async searchAnime() { throw new ProviderError(PROVIDER_ERROR_CODES.UNAVAILABLE); } },
-      myanimelistAdapter: { enabled: true, async searchAnime() { throw new ProviderError(PROVIDER_ERROR_CODES.UNAVAILABLE); } }
+      myanimelistAdapter: { enabled: true, async searchAnime() { throw new ProviderError(PROVIDER_ERROR_CODES.UNAVAILABLE); } },
+      anilistAdapter: { async searchAnime() { throw new ProviderError(PROVIDER_ERROR_CODES.UNAVAILABLE); } }
     });
     const bothFailResponse = await request(bothFailApp)
       .get('/api/media/search?type=anime&q=offline');
@@ -365,7 +468,7 @@ describe('anime search HTTP API', () => {
     });
   });
 
-  it('does not fallback for AniList rate limits, malformed responses, generic failures, or valid empty results', async () => {
+  it('does not fallback for MyAnimeList rate limits, malformed responses, generic failures, or valid empty results', async () => {
     const nonFallbackCases = [
       [PROVIDER_ERROR_CODES.RATE_LIMITED, 'PROVIDER_RATE_LIMITED'],
       [PROVIDER_ERROR_CODES.INVALID_RESPONSE, 'PROVIDER_INVALID_RESPONSE'],
@@ -373,30 +476,31 @@ describe('anime search HTTP API', () => {
     ];
 
     for (const [providerCode, expectedCode] of nonFallbackCases) {
-      let myanimelistCalls = 0;
+      let anilistCalls = 0;
       const app = createApp({
-        anilistAdapter: { async searchAnime() { throw new ProviderError(providerCode); } },
-        myanimelistAdapter: { enabled: true, async searchAnime() { myanimelistCalls += 1; return {}; } }
+        myanimelistAdapter: { enabled: true, async searchAnime() { throw new ProviderError(providerCode); } },
+        anilistAdapter: { async searchAnime() { anilistCalls += 1; return {}; } }
       });
       const response = await request(app).get('/api/media/search?type=anime&q=blocked');
       assert.equal(response.status, 503);
       assert.equal(response.body.error.code, expectedCode);
-      assert.equal(myanimelistCalls, 0);
+      assert.equal(anilistCalls, 0);
     }
 
-    let myanimelistCalls = 0;
+    let anilistCalls = 0;
     const emptyApp = createApp({
-      anilistAdapter: {
+      myanimelistAdapter: {
+        enabled: true,
         async searchAnime() {
           return { results: [], pagination: { page: 1, perPage: 12, hasMore: false } };
         }
       },
-      myanimelistAdapter: { enabled: true, async searchAnime() { myanimelistCalls += 1; return {}; } }
+      anilistAdapter: { async searchAnime() { anilistCalls += 1; return {}; } }
     });
     const emptyResponse = await request(emptyApp).get('/api/media/search?type=anime&q=empty');
     assert.equal(emptyResponse.status, 200);
-    assert.equal(emptyResponse.body.source, 'anilist');
-    assert.equal(myanimelistCalls, 0);
+    assert.equal(emptyResponse.body.source, 'myanimelist');
+    assert.equal(anilistCalls, 0);
   });
 });
 
@@ -698,6 +802,39 @@ describe('typed media search HTTP API', () => {
 });
 
 describe('combined media search HTTP API', () => {
+  it('loads latest releases across all lanes when the query is blank', async () => {
+    const myanimelist = {
+      async getLatest(options) {
+        return { results: ['anime-latest'], pagination: { page: options.page, perPage: 12, hasMore: false } };
+      }
+    };
+    const tmdb = {
+      async getLatest(options) {
+        return { results: [`${options.type}-latest`], pagination: { page: options.page, perPage: 20, hasMore: false } };
+      }
+    };
+    const rawg = {
+      async getLatest(options) {
+        return { results: ['game-latest'], pagination: { page: options.page, perPage: 20, hasMore: false } };
+      }
+    };
+    const app = createApp({
+      myanimelistAdapter: myanimelist,
+      anilistAdapter: { enabled: false },
+      tmdbAdapter: tmdb,
+      thegamesdbAdapter: { enabled: false },
+      rawgAdapter: rawg
+    });
+
+    const response = await request(app).get('/api/media/search?type=all');
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body.results, ['anime-latest', 'movie-latest', 'tv-latest', 'game-latest']);
+    assert.equal(response.body.source, 'combined');
+    assert.equal(response.body.pagination.hasMore, false);
+    assert.equal(response.body.pagination.continuation, null);
+  });
+
   it('runs the four lanes concurrently and returns deterministic media-type ordering', async () => {
     const started = [];
     let allStarted;
@@ -748,7 +885,11 @@ describe('combined media search HTTP API', () => {
     assert.equal(response.body.pagination.page, 1);
     assert.equal(response.body.pagination.hasMore, true);
     assert.equal(typeof response.body.pagination.continuation, 'string');
-    assert.deepEqual(response.body.providerErrors, []);
+    assert.deepEqual(response.body.providerErrors, [{
+      provider: 'myanimelist',
+      code: 'PROVIDER_UNAVAILABLE',
+      message: 'MyAnimeList is currently unavailable.'
+    }]);
   });
 
   it('returns 200 with safe provider errors when one independent lane fails', async () => {
@@ -774,6 +915,10 @@ describe('combined media search HTTP API', () => {
     assert.equal(response.status, 200);
     assert.deepEqual(response.body.results, ['anime', 'movie', 'tv']);
     assert.deepEqual(response.body.providerErrors, [{
+      provider: 'myanimelist',
+      code: 'PROVIDER_UNAVAILABLE',
+      message: 'MyAnimeList is currently unavailable.'
+    }, {
       provider: 'thegamesdb',
       code: 'PROVIDER_UNAVAILABLE',
       message: 'TheGamesDB is currently unavailable.'
@@ -801,7 +946,7 @@ describe('combined media search HTTP API', () => {
     const emptyResponse = await request(emptyAnime).get('/api/media/search?type=all&q=empty');
     assert.equal(emptyResponse.status, 200);
     assert.deepEqual(emptyResponse.body.results, []);
-    assert.deepEqual(emptyResponse.body.providerErrors.map(({ provider }) => provider), ['tmdb', 'thegamesdb', 'rawg']);
+    assert.deepEqual(emptyResponse.body.providerErrors.map(({ provider }) => provider), ['myanimelist', 'tmdb', 'thegamesdb', 'rawg']);
 
     const allFailed = createApp({
       anilistAdapter: { async searchAnime() { throw new ProviderError(PROVIDER_ERROR_CODES.UNAVAILABLE); } },
@@ -933,6 +1078,10 @@ describe('combined media search HTTP API', () => {
       rawg: { page: 2, perPage: 20, hasMore: false }
     });
     assert.deepEqual(second.body.providerErrors, [{
+      provider: 'myanimelist',
+      code: 'PROVIDER_UNAVAILABLE',
+      message: 'MyAnimeList is currently unavailable.'
+    }, {
       provider: 'thegamesdb',
       code: 'PROVIDER_UNAVAILABLE',
       message: 'TheGamesDB is currently unavailable.'
@@ -946,14 +1095,14 @@ describe('combined media search HTTP API', () => {
       anilistAdapter: {
         async searchAnime(options) {
           anilistCalls.push(options);
-          throw new ProviderError(PROVIDER_ERROR_CODES.UNAVAILABLE);
+          return { results: [`anime-${options.page}`], pagination: { page: options.page, perPage: 12, hasMore: options.page < 2 } };
         }
       },
       myanimelistAdapter: {
         enabled: true,
         async searchAnime(options) {
           myanimelistCalls.push(options);
-          return { results: [`anime-${options.page}`], pagination: { page: options.page, perPage: 12, hasMore: options.page < 2 } };
+          throw new ProviderError(PROVIDER_ERROR_CODES.UNAVAILABLE);
         }
       },
       thegamesdbAdapter: { async searchMedia() { return { results: [], pagination: { page: 1, perPage: 20, hasMore: false } }; } },
@@ -967,15 +1116,15 @@ describe('combined media search HTTP API', () => {
 
     assert.equal(first.status, 200);
     assert.equal(second.status, 200);
-    assert.equal(first.body.pagination.providers.myanimelist.page, 1);
-    assert.equal(second.body.pagination.providers.myanimelist.page, 2);
+    assert.equal(first.body.pagination.providers.anilist.page, 1);
+    assert.equal(second.body.pagination.providers.anilist.page, 2);
     assert.deepEqual(first.body.providerErrors, [{
-      provider: 'anilist',
+      provider: 'myanimelist',
       code: 'PROVIDER_UNAVAILABLE',
-      message: 'AniList is currently unavailable.'
+      message: 'MyAnimeList is currently unavailable.'
     }]);
-    assert.deepEqual(anilistCalls.map((options) => options.page), [1]);
-    assert.deepEqual(myanimelistCalls.map((options) => options.page), [1, 2]);
+    assert.deepEqual(anilistCalls.map((options) => options.page), [1, 2]);
+    assert.deepEqual(myanimelistCalls.map((options) => options.page), [1]);
     assert.deepEqual(second.body.results, ['anime-2']);
   });
 
@@ -1000,6 +1149,10 @@ describe('combined media search HTTP API', () => {
 
     assert.equal(first.status, 200);
     assert.deepEqual(first.body.providerErrors, [{
+      provider: 'myanimelist',
+      code: 'PROVIDER_UNAVAILABLE',
+      message: 'MyAnimeList is currently unavailable.'
+    }, {
       provider: 'thegamesdb',
       code: 'PROVIDER_UNAVAILABLE',
       message: 'TheGamesDB is currently unavailable.'
@@ -1011,6 +1164,10 @@ describe('combined media search HTTP API', () => {
     assert.equal(retry.status, 200);
     assert.deepEqual(retry.body.results, ['recovered-game']);
     assert.deepEqual(retry.body.providerErrors, [{
+      provider: 'myanimelist',
+      code: 'PROVIDER_UNAVAILABLE',
+      message: 'MyAnimeList is currently unavailable.'
+    }, {
       provider: 'thegamesdb',
       code: 'PROVIDER_UNAVAILABLE',
       message: 'TheGamesDB is currently unavailable.'

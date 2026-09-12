@@ -16,7 +16,7 @@ function unauthenticatedResponse() {
   };
 }
 
-function media({ id = '550', title = 'Fight Club', provider = 'tmdb', type = 'MOVIE' } = {}) {
+function media({ id = '550', title = 'Fight Club', provider = 'tmdb', type = 'MOVIE', creators = [] } = {}) {
   return {
     provider,
     providerId: id,
@@ -32,17 +32,17 @@ function media({ id = '550', title = 'Fight Club', provider = 'tmdb', type = 'MO
     genres: ['Drama'],
     providerRating: { value: 8.4, max: 10, normalized: 8.4 },
     releaseStatus: 'RELEASED',
-    creators: [],
+    creators,
     isAdult: false,
     metadata: type === 'MOVIE' ? { runtimeMinutes: 139 } : { episodeCount: 12, episodeDurationMinutes: 24 }
   };
 }
 
-function list(results, source = 'tmdb') {
+function list(results, source = 'tmdb', hasMore = false) {
   return {
     results,
     source,
-    pagination: { page: 1, perPage: 12, hasMore: false },
+    pagination: { page: 1, perPage: 12, hasMore },
     providerErrors: []
   };
 }
@@ -91,7 +91,7 @@ describe('functional Discovery surfaces', () => {
     fireEvent.click(screen.getByRole('button', { name: 'View details for Fight Club' }));
 
     expect(await screen.findByRole('heading', { name: 'Fight Club details' })).toBeInTheDocument();
-    expect(within(screen.getByRole('region', { name: 'Fight Club details' })).getByRole('link', { name: 'TMDB' })).toHaveAttribute('href', 'https://www.themoviedb.org/');
+    expect(screen.getByRole('button', { name: 'Bookmark this movie' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Back to results' }));
 
     expect(screen.getByRole('heading', { name: 'Fight Club' })).toBeInTheDocument();
@@ -120,7 +120,8 @@ describe('functional Discovery surfaces', () => {
     await screen.findByRole('heading', { name: 'Fight Club' });
     fireEvent.click(screen.getByRole('button', { name: 'View details for Fight Club' }));
 
-    expect(await screen.findByText('Loading details for Fight Club.')).toBeInTheDocument();
+    const detailsPanel = await screen.findByRole('region', { name: 'Fight Club details' });
+    expect(detailsPanel).toHaveAttribute('aria-busy', 'true');
     resolveDetail(response(detail));
     expect(await screen.findByRole('heading', { name: 'Fight Club details' })).toBeInTheDocument();
   });
@@ -147,14 +148,48 @@ describe('functional Discovery surfaces', () => {
     fireEvent.click(screen.getByRole('button', { name: 'View details for Fight Club' }));
     await screen.findByRole('heading', { name: 'Fight Club details' });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Load recommendations' }));
-
-    const recommendations = await screen.findByRole('region', { name: 'Provider-owned recommendations' });
+    const recommendations = await screen.findByRole('region', { name: 'Recommendations' });
+    expect(screen.queryByRole('button', { name: 'Load recommendations' })).not.toBeInTheDocument();
     expect(within(recommendations).getByRole('heading', { name: 'Pulp Fiction' })).toBeInTheDocument();
-    expect(within(recommendations).getByRole('link', { name: 'TMDB' })).toHaveAttribute('href', 'https://www.themoviedb.org/');
+    expect(within(recommendations).queryByText('UNOFFICIAL TMDB INTEGRATION')).not.toBeInTheDocument();
+    expect(within(recommendations).queryByText('20 Provider-owned Recommendations loaded.')).not.toBeInTheDocument();
   });
 
-  it('loads supported Discovery results with Provider attribution and empty state', async () => {
+  it('shows only prioritized key creators in details', async () => {
+    const detail = media({
+      creators: [
+        { name: 'Extra Name', role: 'Editor' },
+        { name: 'Director One', role: 'Director' },
+        { name: 'Creator One', role: 'Creator' },
+        { name: 'Writer One', role: 'Writer' },
+        { name: 'Story One', role: 'Story' },
+        { name: 'Producer One', role: 'Producer' }
+      ]
+    });
+    fetch.mockImplementation((url) => {
+      if (url === '/api/health') return Promise.resolve(health());
+      if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
+      if (url.includes('/api/media/search')) return Promise.resolve(response(list([detail])));
+      if (url.includes('/recommendations')) return Promise.resolve(response(list([])));
+      if (url.includes('/api/media/tmdb/movie/550')) return Promise.resolve(response(detail));
+      return Promise.resolve(response(list([])));
+    });
+    render(<App />);
+    selectView('Search');
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Search media type' }), { target: { value: 'movie' } });
+    const query = screen.getByRole('searchbox', { name: 'Search movies by title' });
+    fireEvent.change(query, { target: { value: 'fight club' } });
+    fireEvent.submit(query.closest('form'));
+    await screen.findByRole('heading', { name: 'Fight Club' });
+    fireEvent.click(screen.getByRole('button', { name: 'View details for Fight Club' }));
+
+    const detailsPanel = await screen.findByRole('region', { name: 'Fight Club details' });
+    expect(within(detailsPanel).getByText('Director One, Creator One, Writer One, Story One, Producer One')).toBeInTheDocument();
+    expect(within(detailsPanel).queryByText(/Extra Name/)).not.toBeInTheDocument();
+  });
+
+  it('loads supported Discovery results without shelf attribution labels and shows empty state', async () => {
     fetch.mockImplementation((url) => {
       if (url === '/api/health') return Promise.resolve(health());
       if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
@@ -165,7 +200,114 @@ describe('functional Discovery surfaces', () => {
 
     expect(await screen.findByText('No Popular now Movies available.')).toBeInTheDocument();
     const discovery = screen.getByRole('region', { name: 'Popular now Movies shelf' });
-    expect(within(discovery).getByRole('link', { name: 'TMDB' })).toHaveAttribute('href', 'https://www.themoviedb.org/');
+    expect(within(discovery).queryByRole('link', { name: 'TMDB' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/One source, three ways/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Adult content is included/)).not.toBeInTheDocument();
+  });
+
+  it('loads every shelf page from its next arrow without load-more buttons', async () => {
+    const pageTwoTitles = {
+      popular: 'Popular page 2',
+      trending: 'Trending page 2',
+      latest: 'Latest page 2'
+    };
+    const pageTwoRequests = [];
+    fetch.mockImplementation((url) => {
+      if (url === '/api/health') return Promise.resolve(health());
+      if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
+      const shelf = url.includes('/api/media/popular')
+        ? 'popular'
+        : url.includes('/api/media/trending')
+          ? 'trending'
+          : url.includes('/api/media/latest')
+            ? 'latest'
+            : null;
+      if (shelf) {
+        const page = new URL(url, 'http://localhost').searchParams.get('page');
+        if (page === '2') {
+          pageTwoRequests.push(shelf);
+          return Promise.resolve(response(list([media({ id: `${shelf}-2`, title: pageTwoTitles[shelf] })], 'tmdb', false)));
+        }
+        return Promise.resolve(response(list([media({ id: `${shelf}-1`, title: shelf })], 'tmdb', true)));
+      }
+      return Promise.resolve(response(list([])));
+    });
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: 'popular', level: 3 })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Load more popular now' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Load more trending this week' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Load more latest releases' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Scroll Popular now Movies right' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Scroll Trending this week Movies right' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Scroll Latest releases Movies right' }));
+
+    await waitFor(() => expect(pageTwoRequests).toEqual(expect.arrayContaining(['popular', 'trending', 'latest'])));
+    expect(await screen.findByRole('heading', { name: 'Popular page 2' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Trending page 2' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Latest page 2' })).toBeInTheDocument();
+  });
+
+  it('loads the next shelf page when a rail reaches its horizontal end', async () => {
+    const pageTwoRequests = [];
+    fetch.mockImplementation((url) => {
+      if (url === '/api/health') return Promise.resolve(health());
+      if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
+      const shelf = url.includes('/api/media/popular')
+        ? 'popular'
+        : url.includes('/api/media/trending')
+          ? 'trending'
+          : url.includes('/api/media/latest')
+            ? 'latest'
+            : null;
+      if (shelf) {
+        const page = new URL(url, 'http://localhost').searchParams.get('page');
+        if (page === '2') {
+          pageTwoRequests.push(shelf);
+          return Promise.resolve(response(list([media({ id: `${shelf}-2`, title: `${shelf} page 2` })], 'tmdb', false)));
+        }
+        return Promise.resolve(response(list([media({ id: `${shelf}-1`, title: shelf })], 'tmdb', true)));
+      }
+      return Promise.resolve(response(list([])));
+    });
+    render(<App />);
+
+    expect(await screen.findByRole('heading', { name: 'popular', level: 3 })).toBeInTheDocument();
+    for (const label of ['Popular now Movies shelf', 'Trending this week Movies shelf', 'Latest releases Movies shelf']) {
+      const rail = screen.getByRole('region', { name: label }).querySelector('.discovery-rail');
+      Object.defineProperty(rail, 'scrollWidth', { configurable: true, value: 1200 });
+      Object.defineProperty(rail, 'clientWidth', { configurable: true, value: 400 });
+      Object.defineProperty(rail, 'scrollLeft', { configurable: true, value: 850 });
+      fireEvent.scroll(rail);
+    }
+
+    await waitFor(() => expect(pageTwoRequests).toEqual(expect.arrayContaining(['popular', 'trending', 'latest'])));
+    expect(await screen.findByRole('heading', { name: 'popular page 2' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'trending page 2' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'latest page 2' })).toBeInTheDocument();
+  });
+
+  it('uses honest Anime shelf labels and leaves provider selection to the server', async () => {
+    const animeRequests = [];
+    fetch.mockImplementation((url) => {
+      if (url === '/api/health') return Promise.resolve(health());
+      if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
+      if (url.includes('type=anime')) {
+        animeRequests.push(url);
+        return Promise.resolve(response(list([], 'myanimelist')));
+      }
+      return Promise.resolve(response(list([media()])));
+    });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Anime' }));
+
+    expect(await screen.findByRole('heading', { name: 'Currently airing', level: 3 })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Seasonal releases', level: 3 })).toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Source' })).not.toBeInTheDocument();
+    await waitFor(() => expect(animeRequests).toHaveLength(3));
+    animeRequests.forEach((url) => expect(new URL(url, 'http://localhost').searchParams.has('provider')).toBe(false));
   });
 
   it('announces unsupported and rate-limited public states with retry actions', async () => {
@@ -183,10 +325,10 @@ describe('functional Discovery surfaces', () => {
     });
     render(<App />);
 
-    fireEvent.change(screen.getByRole('combobox', { name: 'Discovery media type' }), { target: { value: 'game' } });
-    expect(await screen.findByText('This popular now operation is not supported by the selected Provider.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Games' }));
+    expect(await screen.findByText('This popular now operation is not supported by the catalog provider.')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry Popular now' }));
-    expect(await screen.findByText('The selected Provider is rate-limited.')).toBeInTheDocument();
+    expect(await screen.findByText('The catalog provider is rate-limited.')).toBeInTheDocument();
   });
 
   it('distinguishes application rate limits from Provider rate limits', async () => {
@@ -222,7 +364,7 @@ describe('functional Discovery surfaces', () => {
     });
     render(<App />);
 
-    expect(await screen.findByText('The selected Provider could not return popular now.')).toBeInTheDocument();
+    expect(await screen.findByText('The catalog provider could not return popular now.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retry Popular now' })).toBeInTheDocument();
   });
 
@@ -233,6 +375,7 @@ describe('functional Discovery surfaces', () => {
       if (url === '/api/health') return Promise.resolve(health());
       if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
       if (url.includes('/api/media/search')) return Promise.resolve(response(list([detail])));
+      if (url.includes('/recommendations')) return Promise.resolve(response(list([])));
       if (url.includes('/api/media/tmdb/movie/550')) {
         detailCall += 1;
         return Promise.resolve(detailCall === 1 ? response({ results: [] }) : response(detail));
@@ -249,7 +392,8 @@ describe('functional Discovery surfaces', () => {
     await screen.findByRole('heading', { name: 'Fight Club' });
     fireEvent.click(screen.getByRole('button', { name: 'View details for Fight Club' }));
 
-    expect(await screen.findByText('The details response was invalid.')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Invalid response.' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry details' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry details' }));
     expect(await screen.findByRole('heading', { name: 'Fight Club details' })).toBeInTheDocument();
   });

@@ -20,7 +20,7 @@ Phase 7 remains a local-development and controlled-staging slice. It does not cl
 - Use an explicit Provider Capability matrix for each Media type and operation: search, details, trending, popular, and Provider-owned Recommendations.
 - Implement only capabilities supported and normalized by a Provider. Unsupported operations return 501 with code CAPABILITY_UNSUPPORTED; they are not represented as empty results.
 - Details return the existing normalized Media contract. They do not introduce a second provider-specific response shape or expose raw upstream payloads.
-- New details, Discovery, and Recommendation operations use the effective Provider explicitly. Existing search fallback behavior remains unchanged; new operations do not silently switch Providers.
+- New details, Discovery, and Recommendation operations use the effective Provider explicitly. Server-selected Anime search and Discovery use the MyAnimeList-primary/AniList-availability-fallback policy; explicit Provider selections remain strict. Anime Discovery uses MyAnimeList for popularity, airing-ranked, and current-season lists.
 - Combined Search does not gain details, Discovery, or Recommendation variants in this phase. Cross-Provider ranking, identity matching, and deduplication remain out of scope.
 - Public list responses keep the existing results, pagination, source, and providerErrors shape. A detail response is one Media object.
 - The public includeAdult query keeps the existing default. When includeAdult is false, adult items are omitted from lists and a direct adult detail request is treated as not found.
@@ -53,11 +53,11 @@ GET /api/media/:provider/:type/:id/recommendations?page=1&perPage=12&includeAdul
 Discovery:
 
 ~~~http
-GET /api/media/trending?type=anime&provider=anilist&page=1&perPage=12&includeAdult=true
+GET /api/media/trending?type=anime&page=1&perPage=12&includeAdult=true
 GET /api/media/popular?type=game&provider=rawg&page=1&perPage=12&includeAdult=true
 ~~~
 
-Details use the Provider and Media type from the route. Discovery may use the type's primary Provider when provider is omitted, but it never silently falls back to another Provider. The server validates Provider/type compatibility, Provider ID syntax, pagination, adult-content preference, and unknown query parameters.
+Details use the Provider and Media type from the route. Discovery uses the type's primary Provider when provider is omitted; server-selected Anime requests may fall back from MyAnimeList to AniList only when MyAnimeList is unavailable. Explicit Provider selections remain strict. The server validates Provider/type compatibility, Provider ID syntax, pagination, adult-content preference, and unknown query parameters.
 
 The detail response is a normalized Media object:
 
@@ -117,11 +117,11 @@ The cache is temporary and process-local. It is not a source of truth, is not sh
 
 - Add capability-matrix tests for valid and unsupported Provider/type/operation combinations.
 - Add adapter tests for supported details, Discovery, and Recommendation operations using mocked HTTP seams; cover empty results, adult filtering, malformed payloads, timeouts, rate limits, unavailable Providers, and safe diagnostics.
-- Add HTTP tests for route validation, Provider selection, pagination, 404 filtering, 501 unsupported operations, 503 Provider failures, response shape, attribution metadata, and no silent fallback.
+- Add HTTP tests for route validation, Provider selection, pagination, 404 filtering, 501 unsupported operations, 503 Provider failures, response shape, attribution metadata, and the constrained server-selected Anime fallback.
 - Add cache tests for key isolation, hit/miss behavior, TTL expiry, LRU bounds, operation-specific TTL, in-flight sharing, failed-request eviction, and Provider policy denial.
 - Add rate-limit tests for per-IP token behavior, burst capacity, 429 and Retry-After, configuration, health exemption, and safe responses.
 - Add observability tests or spies proving query contents, credentials, Sessions, Library Items, and tracking fields are not logged or cached.
-- Add browser tests for details loading and retry, Discovery and Recommendation lists, unsupported and unavailable states, Provider attribution, Back to results, and preservation of existing Phase 6 behavior.
+- Add browser tests for details loading and retry, Discovery and Recommendation lists, catalog-specific Anime shelf labels, automatic rail pagination, unsupported and unavailable states, Provider attribution, Back to results, and preservation of existing Phase 6 behavior.
 - Run npm run check without Provider credentials or live Provider calls.
 - Run npm run test:integration against the dedicated goraku_test database to ensure Phase 7 does not regress the PostgreSQL-backed foundation.
 - Add docs/phase-7-walkthrough.md and update README, architecture, PRODUCT.md, and DESIGN.md so Phase 7 and Phase 8 boundaries remain truthful.
@@ -136,7 +136,7 @@ Personalized recommendations based on a User's Library, cross-Provider ranking o
 - [x] Supported details operations return the existing normalized Media contract without raw Provider payloads.
 - [x] Supported trending/popular and Recommendation operations use the existing list/pagination contract.
 - [x] Unsupported operations return safe 501 CAPABILITY_UNSUPPORTED responses and are distinct from valid empty results.
-- [x] New operations use an explicit effective Provider and never silently fall back.
+- [x] New operations use an explicit effective Provider; only server-selected Anime requests use the documented MyAnimeList-to-AniList availability fallback.
 - [x] Adult-content filtering, route validation, Provider errors, 404 behavior, and safe diagnostics are covered.
 - [x] Successful public Provider-owned responses use the bounded, policy-aware Media Metadata Cache.
 - [x] Identical concurrent cache misses share one Provider request, while failed requests do not poison the cache.
@@ -151,7 +151,7 @@ Personalized recommendations based on a User's Library, cross-Provider ranking o
 - `npm run check` passed on 2026-09-10: 169 server tests, 70 client tests, the production client build, and the client-secret boundary scan. The suite used mocked or injected Provider seams and no Provider credentials or live Provider calls.
 - `TEST_DATABASE_URL=postgresql://goraku:goraku_dev@localhost:5432/goraku_test npm run test:integration` passed on 2026-09-10: all 14 dedicated PostgreSQL integration tests passed. The Phase 7 public Media slice does not add Provider calls to PostgreSQL tests.
 - Cache, runtime-signal, safe-error, private-route, browser, and client-build boundary tests confirm that Provider credentials, upstream diagnostics, query contents, Sessions, Library Items, and tracking fields are not retained or exposed at their respective seams.
-- `docs/phase-7-walkthrough.md`, `docs/adr/0006-capability-driven-discovery-and-bounded-cache.md`, README, architecture, PRODUCT.md, DESIGN.md, and CONTEXT.md record the implemented Phase 7 boundary and keep Phase 8 as planned presentation refinement.
+- `docs/phase-7-walkthrough.md`, `docs/adr/0006-capability-driven-discovery-and-bounded-cache.md`, README, architecture, PRODUCT.md, DESIGN.md, and CONTEXT.md record the implemented Phase 7 boundary and the completed Phase 8 presentation refinement.
 
 ## Comments
 

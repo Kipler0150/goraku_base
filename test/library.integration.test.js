@@ -8,6 +8,7 @@ import {
   assertSafeResponse,
   assertDedicatedTestDatabase,
   createMigratedSchema,
+  createTestEmailDelivery,
   dropTestSchema,
   sessionCookieValue,
   testDatabaseUrl
@@ -23,17 +24,34 @@ function compareLibraryItemsNewestFirst(left, right) {
   return 0;
 }
 
+async function registerVerified(app, emailDelivery, { username, email }) {
+  const registration = await request(app)
+    .post('/api/auth/register')
+    .set('Origin', APP_ORIGIN)
+    .send({ username, email, password: 'correct horse battery staple!' });
+  assert.equal(registration.status, 202);
+  assertSafeResponse(registration);
+  const token = emailDelivery.verificationTokens.get(email.toLowerCase());
+  assert.ok(token);
+  const verification = await request(app).get(`/api/auth/verify-email?token=${encodeURIComponent(token)}`);
+  assert.equal(verification.status, 303);
+  assertSafeResponse(verification);
+  return sessionCookieValue(verification);
+}
+
 describe('PostgreSQL library HTTP API', () => {
   let pool;
   let schemaPool;
   let schemaName;
   let app;
+  let emailDelivery;
 
   before(async () => {
     assertDedicatedTestDatabase(testDatabaseUrl);
     pool = createDatabasePool({ databaseUrl: testDatabaseUrl });
     ({ schemaName, schemaPool } = await createMigratedSchema(pool, 'library_test'));
-    app = createApp({ databasePool: schemaPool, appOrigin: APP_ORIGIN });
+    emailDelivery = createTestEmailDelivery();
+    app = createApp({ databasePool: schemaPool, appOrigin: APP_ORIGIN, emailDelivery });
   });
 
   after(async () => {
@@ -45,14 +63,19 @@ describe('PostgreSQL library HTTP API', () => {
 
   it('persists defaults, pagination, duplicate safety, and ownership-scoped mutations', async () => {
     const suffix = `${process.pid}-${Date.now()}`;
-    const register = async (email) => {
+    const register = async (email, username = email.split('@')[0].replace(/[^a-z0-9_]/gi, '_').slice(0, 32)) => {
       const response = await request(app)
         .post('/api/auth/register')
         .set('Origin', APP_ORIGIN)
-        .send({ email, password: 'correct horse battery staple!' });
-      assert.equal(response.status, 201);
+        .send({ username, email, password: 'correct horse battery staple!' });
+      assert.equal(response.status, 202);
       assertSafeResponse(response);
-      return sessionCookieValue(response);
+      const token = emailDelivery.verificationTokens.get(email.toLowerCase());
+      assert.ok(token);
+      const verification = await request(app).get(`/api/auth/verify-email?token=${encodeURIComponent(token)}`);
+      assert.equal(verification.status, 303);
+      assertSafeResponse(verification);
+      return sessionCookieValue(verification);
     };
     const ownerCookie = await register(`library-owner-${suffix}@example.com`);
     const otherCookie = await register(`library-other-${suffix}@example.com`);
@@ -234,10 +257,10 @@ describe('PostgreSQL library HTTP API', () => {
   it('exposes the enriched repository seam and rejects invalid updates atomically', async () => {
     const suffix = `${process.pid}-${Date.now()}-repository`;
     const user = await schemaPool.query(`
-      INSERT INTO users (email)
-      VALUES ($1)
+      INSERT INTO users (username, email)
+      VALUES ($2, $1)
       RETURNING id
-    `, [`${suffix}@example.com`]);
+    `, [`${suffix}@example.com`, `repository_${process.pid}`]);
     const userId = user.rows[0].id;
     const repository = createLibraryRepository({ pool: schemaPool });
 

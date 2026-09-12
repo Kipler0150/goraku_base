@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  createLibraryRepository,
   MAX_USER_OWNED_NAME_LENGTH,
   MAX_NOTE_LENGTH,
   normalizeNote,
@@ -10,6 +11,71 @@ import {
 } from '../server/library.js';
 
 describe('Library tracking domain values', () => {
+  it('persists episode changes using the public season and episode field names', async () => {
+    const queries = [];
+    const pool = {
+      async query(text, values) {
+        queries.push({ text, values });
+        return { rowCount: 1, rows: [{ type: 'TV' }] };
+      },
+      async connect() {
+        return {
+          async query(text, values) {
+            queries.push({ text, values });
+            if (/^SELECT season_number AS season/i.test(text.trim())) {
+              return { rowCount: 1, rows: [{ season: 1, episode: 2 }] };
+            }
+            return { rowCount: 0, rows: [] };
+          },
+          release() {}
+        };
+      }
+    };
+
+    const result = await createLibraryRepository({ pool }).updateWatchedEpisodes({
+      userId: 'user-1',
+      id: 'library-item-1',
+      episodes: [{ season: 1, episode: 2, watched: true }]
+    });
+
+    assert.deepEqual(result, { watched: [{ season: 1, episode: 2 }] });
+    const recordsetQueries = queries.filter(({ text }) => text.includes('jsonb_to_recordset'));
+    assert.equal(recordsetQueries.length, 2);
+    for (const { text } of recordsetQueries) {
+      assert.match(text, /AS change\(season integer, episode integer, watched boolean\)/);
+    }
+  });
+
+  it('allows watched-episode reads and writes for Anime Library Items', async () => {
+    const pool = {
+      async query(text) {
+        if (/SELECT type/i.test(text)) return { rowCount: 1, rows: [{ type: 'ANIME' }] };
+        return { rowCount: 1, rows: [{ season: 1, episode: 1 }] };
+      },
+      async connect() {
+        return {
+          async query(text) {
+            if (/^SELECT season_number AS season/i.test(text.trim())) {
+              return { rowCount: 1, rows: [{ season: 1, episode: 1 }] };
+            }
+            return { rowCount: 0, rows: [] };
+          },
+          release() {}
+        };
+      }
+    };
+
+    const repository = createLibraryRepository({ pool });
+    assert.deepEqual(await repository.listWatchedEpisodes({ userId: 'user-1', id: 'anime-item-1' }), {
+      watched: [{ season: 1, episode: 1 }]
+    });
+    assert.deepEqual(await repository.updateWatchedEpisodes({
+      userId: 'user-1',
+      id: 'anime-item-1',
+      episodes: [{ season: 1, episode: 1, watched: true }]
+    }), { watched: [{ season: 1, episode: 1 }] });
+  });
+
   it('trims Tag and Collection names while retaining display and normalized forms', () => {
     assert.deepEqual(normalizeUserOwnedName('  Weekend Queue  '), {
       name: 'Weekend Queue',

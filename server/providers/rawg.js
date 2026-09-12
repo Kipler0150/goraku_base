@@ -158,6 +158,26 @@ function normalizePayload(payload, page, perPage, includeAdult) {
   };
 }
 
+function hasFilters(filters) {
+  return Boolean(filters && (
+    (Array.isArray(filters.genres) && filters.genres.length > 0) ||
+    filters.creator ||
+    Number.isFinite(filters.minMetacritic)
+  ));
+}
+
+function normalizeFilterOptions(payload, field = 'results') {
+  const root = assertObject(payload);
+  if (!Array.isArray(root[field])) throw invalidResponse();
+  return root[field].map((entry) => {
+    const item = assertObject(entry);
+    const id = normalizeProviderId(item.id);
+    const label = nullableString(item.name);
+    if (!label) throw invalidResponse();
+    return { id, label };
+  });
+}
+
 function errorForStatus(status, details = false) {
   if (details && status === 404) return providerError(PROVIDER_ERROR_CODES.NOT_FOUND);
   if (status === 401 || status === 403 || status === 503) return providerError(PROVIDER_ERROR_CODES.UNAVAILABLE);
@@ -166,8 +186,8 @@ function errorForStatus(status, details = false) {
   return providerError(PROVIDER_ERROR_CODES.ERROR);
 }
 
-function validateSearchOptions({ type, query, page, perPage, includeAdult }) {
-  if (type !== 'game' || typeof query !== 'string' || !query.trim()) throw invalidResponse();
+function validateSearchOptions({ type, query, page, perPage, includeAdult, filters }) {
+  if (type !== 'game' || typeof query !== 'string' || (!query.trim() && !hasFilters(filters))) throw invalidResponse();
   if (!Number.isInteger(page) || page < 1 || !Number.isInteger(perPage) || perPage < 1) throw invalidResponse();
   if (typeof includeAdult !== 'boolean') throw invalidResponse();
 }
@@ -203,19 +223,24 @@ export function createRAWGAdapter({
     async searchMedia(options = {}) {
       const {
         type = 'game',
-        query,
+        query = '',
         page = 1,
         perPage = RAWG_PAGE_SIZE,
-        includeAdult = true
+        includeAdult = true,
+        filters = null
       } = options;
-      validateSearchOptions({ type, query, page, perPage, includeAdult });
+      validateSearchOptions({ type, query, page, perPage, includeAdult, filters });
       if (!normalizedKey) throw providerError(PROVIDER_ERROR_CODES.UNAVAILABLE);
 
       const url = new URL(endpoint);
       url.searchParams.set('key', normalizedKey);
-      url.searchParams.set('search', query.trim());
+      if (query.trim()) url.searchParams.set('search', query.trim());
+      if (!query.trim() && hasFilters(filters)) url.searchParams.set('ordering', '-released');
       url.searchParams.set('page', String(page));
       url.searchParams.set('page_size', String(perPage));
+      if (filters?.genres?.length) url.searchParams.set('genres', filters.genres.join(','));
+      if (filters?.creator) url.searchParams.set('creators', filters.creator);
+      if (Number.isFinite(filters?.minMetacritic)) url.searchParams.set('metacritic', `${filters.minMetacritic},100`);
 
       const controller = new AbortController();
       let timedOut = false;
@@ -258,6 +283,42 @@ export function createRAWGAdapter({
       } finally {
         clearTimeout(timeoutHandle);
       }
+    },
+    async getFilterOptions({ type = 'game', creatorQuery = '', includeAdult = true } = {}) {
+      if (type !== 'game' || typeof creatorQuery !== 'string' || typeof includeAdult !== 'boolean') throw invalidResponse();
+      if (!normalizedKey) throw providerError(PROVIDER_ERROR_CODES.UNAVAILABLE);
+      const apiRoot = normalizedDetailsEndpoint.replace(/\/games\/?$/, '');
+      const headers = { accept: 'application/json' };
+      const genresUrl = new URL(`${apiRoot}/genres`);
+      genresUrl.searchParams.set('key', normalizedKey);
+      const creatorsUrl = new URL(`${apiRoot}/creators`);
+      creatorsUrl.searchParams.set('key', normalizedKey);
+      creatorsUrl.searchParams.set('page', '1');
+      creatorsUrl.searchParams.set('page_size', '10');
+      if (creatorQuery.trim()) creatorsUrl.searchParams.set('search', creatorQuery.trim());
+      const [genres, creators] = await Promise.all([
+        requestProviderJson({
+          request,
+          url: genresUrl,
+          timeoutMs,
+          options: { method: 'GET', headers },
+          invalidResponse,
+          errorForStatus: (status) => errorForStatus(status)
+        }),
+        requestProviderJson({
+          request,
+          url: creatorsUrl,
+          timeoutMs,
+          options: { method: 'GET', headers },
+          invalidResponse,
+          errorForStatus: (status) => errorForStatus(status)
+        })
+      ]);
+      return {
+        genres: normalizeFilterOptions(genres),
+        creators: normalizeFilterOptions(creators),
+        rating: { field: 'minMetacritic', label: 'Minimum Metacritic', max: 100, step: 1 }
+      };
     },
     async getPopular({ page = 1, perPage = RAWG_PAGE_SIZE, includeAdult = true } = {}) {
       const options = validateDiscoveryOptions({ page, perPage, includeAdult });

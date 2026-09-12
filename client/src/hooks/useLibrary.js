@@ -285,6 +285,16 @@ export function useLibrary({ enabled = false, onAuthenticationRequired } = {}) {
     });
   }, [beginAction, enabled, enqueueItemMutation, failAction, finishAction, onAuthenticationRequired]);
 
+  const findSavedItem = useCallback((media) => {
+    const identity = mediaIdentity(media);
+    return state.results.find((item) => mediaIdentity(item) === identity);
+  }, [state.results]);
+
+  const removeMedia = useCallback((media) => {
+    const item = findSavedItem(media);
+    return item ? remove(item.id) : null;
+  }, [findSavedItem, remove]);
+
   const changeMembership = useCallback(async (kind, libraryItemId, resource, attached) => {
     if (!enabled) return false;
     const resourceId = resource.id;
@@ -324,6 +334,10 @@ export function useLibrary({ enabled = false, onAuthenticationRequired } = {}) {
 
   const isSaved = useCallback((media) => state.savedIdentities.includes(mediaIdentity(media)), [state.savedIdentities]);
   const isSaveBusy = useCallback((identity) => Boolean(state.actions[`save:${identity}`]), [state.actions]);
+  const isRemoveBusy = useCallback((media) => {
+    const item = findSavedItem(media);
+    return item ? Boolean(state.actions[actionFor(item.id, 'remove')]) : false;
+  }, [findSavedItem, state.actions]);
   const isActionBusy = useCallback((id, field) => Boolean(state.actions[actionFor(id, field)]), [state.actions]);
   const isItemBusy = useCallback((id) => Object.keys(state.actions).some((key) => key.startsWith(`${id}:`)), [state.actions]);
 
@@ -337,11 +351,14 @@ export function useLibrary({ enabled = false, onAuthenticationRequired } = {}) {
     save,
     update,
     remove,
+    removeMedia,
+    findSavedItem,
     attach: (id, kind, resource) => changeMembership(kind, id, resource, true),
     detach: (id, kind, resource) => changeMembership(kind, id, resource, false),
     getItemError,
     isSaved,
     isSaveBusy,
+    isRemoveBusy,
     isActionBusy,
     isItemBusy,
     isBusy: state.status === 'loading' || state.loadingPage || Object.keys(state.actions).length > 0

@@ -89,8 +89,7 @@ describe('anime search experience', () => {
     vi.restoreAllMocks();
   });
 
-  it('does not search empty input, debounces typing, and renders explicit card values', async () => {
-    vi.useFakeTimers();
+  it('browses latest releases from a blank input, debounces typing, and renders explicit card values', async () => {
     fetch.mockImplementation((url) => {
       if (url === '/api/health') return Promise.resolve(healthResponse());
       if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
@@ -102,14 +101,20 @@ describe('anime search experience', () => {
     const searchCalls = () => fetch.mock.calls.filter(([url]) => url.startsWith('/api/media/search'));
 
     expect(searchCalls()).toHaveLength(0);
+    fireEvent.submit(input.closest('form'));
+    expect(await screen.findByRole('heading', { name: 'Naruto' })).toBeInTheDocument();
+    expect(searchCalls()).toHaveLength(1);
+    expect(searchCalls()[0]).not.toContain('q=');
+
+    vi.useFakeTimers();
     fireEvent.change(input, { target: { value: 'naruto' } });
     expect(screen.getByText('Searching. Results will appear below.')).toBeInTheDocument();
-    expect(searchCalls()).toHaveLength(0);
+    expect(searchCalls()).toHaveLength(1);
 
     await act(async () => {
       vi.advanceTimersByTime(299);
     });
-    expect(searchCalls()).toHaveLength(0);
+    expect(searchCalls()).toHaveLength(1);
 
     await act(async () => {
       vi.advanceTimersByTime(1);
@@ -162,7 +167,7 @@ describe('anime search experience', () => {
 
     expect(input).toHaveAttribute('aria-controls', 'media-results');
     expect(results).toHaveAttribute('aria-busy', 'false');
-    expect(screen.getByText('Ready to search anime.')).toHaveAttribute('aria-live', 'polite');
+    expect(screen.getByText('Ready to browse latest releases or search by title.')).toHaveAttribute('aria-live', 'polite');
     expect(adultCheckbox).toBeChecked();
 
     input.focus();
@@ -304,9 +309,52 @@ describe('anime search experience', () => {
     expect(screen.getByText('Searching movies for arrival.')).toBeInTheDocument();
     expect(await screen.findByRole('heading', { name: 'Arrival' })).toBeInTheDocument();
     expect(screen.getByRole('searchbox', { name: 'Search movies by title' })).toBeInTheDocument();
-    expect(screen.getByText('UNOFFICIAL TMDB INTEGRATION')).toBeInTheDocument();
+    expect(screen.queryByText('UNOFFICIAL TMDB INTEGRATION')).not.toBeInTheDocument();
     expect(fetch.mock.calls.at(-1)[0]).toContain('type=movie');
     expect(fetch.mock.calls.at(-1)[0]).toContain('provider=tmdb');
+  });
+
+  it('offers a searchable multi-select genre filter with a genre-only reset', async () => {
+    const filterOptions = {
+      type: 'anime',
+      source: 'anilist',
+      genres: [
+        { id: 'Action', label: 'Action' },
+        { id: 'Comedy', label: 'Comedy' },
+        { id: 'Drama', label: 'Drama' }
+      ],
+      creators: [],
+      rating: { field: 'minRating', label: 'Minimum Provider Rating', max: 10, step: 0.5 }
+    };
+    fetch.mockImplementation((url) => {
+      if (url === '/api/health') return Promise.resolve(healthResponse());
+      if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
+      if (url.startsWith('/api/media/filter-options')) return Promise.resolve(searchResponse(filterOptions));
+      return Promise.resolve(searchResponse(searchPayload([media('1', 'Naruto')])));
+    });
+    render(<App />);
+    selectView('Search');
+
+    fireEvent.click(screen.getByText('More filters'));
+    const genreTrigger = await screen.findByText('Any genres');
+    fireEvent.click(genreTrigger);
+    const genreSearch = screen.getByRole('searchbox', { name: 'Search genres' });
+    expect(screen.getByRole('button', { name: 'Action', pressed: false })).toBeInTheDocument();
+    fireEvent.change(genreSearch, { target: { value: 'com' } });
+    expect(screen.getByRole('button', { name: 'Comedy', pressed: false })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Action', pressed: false })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Comedy', pressed: false }));
+    expect(screen.getByRole('button', { name: 'Comedy', pressed: true })).toBeInTheDocument();
+    expect(screen.getByText('Comedy', { selector: 'summary span' })).toBeInTheDocument();
+    fireEvent.submit(genreSearch.closest('form'));
+    await screen.findByRole('heading', { name: 'Naruto' });
+    const latestFilteredUrl = fetch.mock.calls.map(([url]) => url).findLast((url) => url.startsWith('/api/media/search'));
+    expect(latestFilteredUrl).toContain('genres=Comedy');
+    expect(latestFilteredUrl).not.toContain('q=');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reset' }));
+    expect(screen.getByText('Any genres', { selector: 'summary span' })).toBeInTheDocument();
   });
 
   it('keeps runtime and episode facts in details instead of the compact cards', async () => {
@@ -353,7 +401,7 @@ describe('anime search experience', () => {
     await screen.findByRole('heading', { name: 'Severance details' });
     expect(screen.getByText('Seasons unavailable')).toBeInTheDocument();
     expect(screen.getByText('Episodes unavailable')).toBeInTheDocument();
-    expect(screen.getByText('UNOFFICIAL TMDB INTEGRATION')).toBeInTheDocument();
+    expect(screen.queryByText('UNOFFICIAL TMDB INTEGRATION')).not.toBeInTheDocument();
   });
 
   it('ignores a slower response from the previous type after a type change', async () => {

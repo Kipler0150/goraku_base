@@ -9,6 +9,7 @@ import {
 import {
   assertDedicatedTestDatabase,
   createMigratedSchema,
+  createTestEmailDelivery,
   dropTestSchema,
   testDatabaseUrl
 } from './support/postgres-integration.js';
@@ -18,12 +19,14 @@ describe('PostgreSQL authentication model', () => {
   let schemaPool;
   let schemaName;
   let auth;
+  let emailDelivery;
 
   before(async () => {
     assertDedicatedTestDatabase(testDatabaseUrl);
     pool = createDatabasePool({ databaseUrl: testDatabaseUrl });
     ({ schemaName, schemaPool } = await createMigratedSchema(pool, 'auth_test'));
-    auth = createAuthService({ pool: schemaPool });
+    emailDelivery = createTestEmailDelivery();
+    auth = createAuthService({ pool: schemaPool, emailDelivery });
   });
 
   after(async () => {
@@ -33,36 +36,42 @@ describe('PostgreSQL authentication model', () => {
     }
   });
 
-  it('registers a normalized User with a derived credential and hashed Session', async () => {
-    const sessionResult = await auth.register({
+  it('registers a normalized pending User with a derived credential and hashed verification token', async () => {
+    const pending = await auth.register({
+      username: 'Reader_Name',
       email: '  User@Example.COM ',
       password: 'correct horse battery staple!'
     });
 
-    assert.deepEqual(Object.keys(sessionResult.user).sort(), ['email', 'id']);
-    assert.equal(sessionResult.user.email, 'user@example.com');
-    assert.match(sessionResult.session.token, /^[A-Za-z0-9_-]{43}$/);
-    assert.doesNotMatch(JSON.stringify(sessionResult.user), /password|session|token/i);
-    assert.equal(JSON.stringify(sessionResult).includes(sessionResult.session.token), false);
+    assert.deepEqual(Object.keys(pending.user).sort(), ['avatarUpdatedAt', 'email', 'id', 'username']);
+    assert.equal(pending.user.username, 'reader_name');
+    assert.equal(pending.user.email, 'user@example.com');
+    assert.equal(pending.verificationRequired, true);
+    assert.doesNotMatch(JSON.stringify(pending), /password|session|token/i);
 
     const stored = await schemaPool.query(`
-      SELECT u.email, c.password_hash, s.token_hash, s.expires_at, s.created_at
+      SELECT u.email, u.email_verified_at, c.password_hash, t.token_hash, t.expires_at
       FROM users AS u
       INNER JOIN local_credentials AS c ON c.user_id = u.id
-      INNER JOIN sessions AS s ON s.user_id = u.id
+      INNER JOIN auth_tokens AS t ON t.user_id = u.id
       WHERE u.id = $1
-    `, [sessionResult.user.id]);
+    `, [pending.user.id]);
     assert.equal(stored.rowCount, 1);
     assert.equal(stored.rows[0].email, 'user@example.com');
+    assert.equal(stored.rows[0].email_verified_at, null);
     assert.match(stored.rows[0].password_hash, /^scrypt\$v1\$/);
     assert.notEqual(stored.rows[0].password_hash, 'correct horse battery staple!');
-    assert.notEqual(stored.rows[0].token_hash, sessionResult.session.token);
-    assert.equal(stored.rows[0].expires_at.getTime() - stored.rows[0].created_at.getTime() >= 7 * 24 * 60 * 60 * 1000 - 1000, true);
+    assert.match(stored.rows[0].token_hash, /^sha256\$[a-f0-9]{64}$/);
+    assert.equal(stored.rows[0].expires_at.getTime() > Date.now(), true);
+
+    const verified = await auth.verifyEmail(emailDelivery.verificationTokens.get('user@example.com'));
+    assert.match(verified.session.token, /^[A-Za-z0-9_-]{43}$/);
+    assert.equal((await auth.getSession(verified.session.token)).user.id, pending.user.id);
   });
 
   it('rejects duplicate normalized email registration without creating another User', async () => {
     await assert.rejects(
-      () => auth.register({ email: 'USER@example.com', password: 'another valid password!' }),
+      () => auth.register({ username: 'another_reader', email: 'USER@example.com', password: 'another valid password!' }),
       (error) => error instanceof AuthConflictError && error.code === 'CONFLICT'
     );
 
@@ -72,7 +81,7 @@ describe('PostgreSQL authentication model', () => {
 
   it('creates concurrent Sessions, authenticates them, and revokes only the selected Session', async () => {
     const first = await auth.login({ email: 'user@example.com', password: 'correct horse battery staple!' });
-    const second = await auth.login({ email: 'USER@EXAMPLE.COM', password: 'correct horse battery staple!' });
+    const second = await auth.login({ identifier: ' READER_NAME ', password: 'correct horse battery staple!' });
 
     assert.ok(first);
     assert.ok(second);

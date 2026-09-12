@@ -234,6 +234,47 @@ function normalizeDetailsResult(value, type, imageBaseUrl) {
   }
 }
 
+function normalizeEpisodeRuntime(value) {
+  if (value == null) return null;
+  if (!Number.isInteger(value) || value < 0) throw invalidResponse();
+  return value;
+}
+
+function isReleasedDate(date) {
+  if (!date || !Number.isInteger(date.year) || !Number.isInteger(date.month) || !Number.isInteger(date.day)) return false;
+  return Date.UTC(date.year, date.month - 1, date.day) <= Date.now();
+}
+
+function normalizeSeasonEpisodes(value, providerId, season, imageBaseUrl) {
+  const root = assertObject(value);
+  if (!Array.isArray(root.episodes)) throw invalidResponse();
+
+  const episodes = root.episodes
+    .map((episode) => {
+      const item = assertObject(episode);
+      if (!Number.isInteger(item.episode_number) || item.episode_number < 1) return null;
+      const airDate = normalizeDate(item.air_date);
+      if (!isReleasedDate(airDate)) return null;
+      return {
+        number: item.episode_number,
+        title: nullableString(item.name) ?? `Episode ${item.episode_number}`,
+        airDate,
+        runtimeMinutes: normalizeEpisodeRuntime(item.runtime),
+        image: imageUrl(imageBaseUrl, POSTER_SIZE, item.still_path)
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.number - right.number);
+
+  return {
+    provider: 'tmdb',
+    providerId: normalizeProviderId(providerId),
+    type: 'TV',
+    season,
+    episodes
+  };
+}
+
 function normalizePayload(payload, type, imageBaseUrl, includeAdult) {
   const root = assertObject(payload);
   if (!Number.isInteger(root.page) || root.page < 1) throw invalidResponse();
@@ -262,10 +303,42 @@ function errorForStatus(status, isSearchRequest = false) {
   return providerError(PROVIDER_ERROR_CODES.ERROR);
 }
 
-function validateSearchOptions({ type, query, page, perPage, includeAdult }) {
-  if (!SEARCH_TYPES.has(type) || typeof query !== 'string' || !query.trim()) throw invalidResponse();
+function hasFilters(filters) {
+  return Boolean(filters && (
+    (Array.isArray(filters.genres) && filters.genres.length > 0) ||
+    filters.creator ||
+    Number.isFinite(filters.minRating)
+  ));
+}
+
+function validateSearchOptions({ type, query, page, perPage, includeAdult, filters }) {
+  if (!SEARCH_TYPES.has(type) || typeof query !== 'string' || (!query.trim() && !hasFilters(filters))) throw invalidResponse();
   if (!Number.isInteger(page) || page < 1 || !Number.isInteger(perPage) || perPage < 1) throw invalidResponse();
   if (typeof includeAdult !== 'boolean') throw invalidResponse();
+}
+
+function normalizeFilterOptions(payload, field) {
+  const root = assertObject(payload);
+  if (!Array.isArray(root[field])) throw invalidResponse();
+  return root[field].map((entry) => {
+    const item = assertObject(entry);
+    const id = normalizeProviderId(item.id);
+    const label = nullableString(item.name);
+    if (!label) throw invalidResponse();
+    return { id, label };
+  });
+}
+
+function normalizeCreatorOptions(payload) {
+  const root = assertObject(payload);
+  if (!Array.isArray(root.results)) throw invalidResponse();
+  return root.results.map((entry) => {
+    const item = assertObject(entry);
+    const id = normalizeProviderId(item.id);
+    const label = nullableString(item.name);
+    if (!label) throw invalidResponse();
+    return { id, label };
+  });
 }
 
 /**
@@ -302,15 +375,24 @@ export function createTMDBAdapter({
   return {
     enabled: Boolean(normalizedToken),
     async searchMedia(options = {}) {
-      const { type = 'movie', query, page = 1, perPage = 12, includeAdult = true } = options;
-      validateSearchOptions({ type, query, page, perPage, includeAdult });
+      const { type = 'movie', query = '', page = 1, perPage = 12, includeAdult = true, filters = null } = options;
+      validateSearchOptions({ type, query, page, perPage, includeAdult, filters });
       if (!normalizedToken) throw providerError(PROVIDER_ERROR_CODES.UNAVAILABLE);
 
-      const url = new URL(`${endpoint.replace(/\/+$/, '')}/${type}`);
-      url.searchParams.set('query', query);
+      const filtered = hasFilters(filters);
+      const url = new URL(filtered
+        ? `${normalizedDetailsEndpoint}/discover/${type}`
+        : `${endpoint.replace(/\/+$/, '')}/${type}`);
+      if (!filtered) url.searchParams.set('query', query.trim());
       url.searchParams.set('page', String(page));
       url.searchParams.set('include_adult', String(includeAdult));
       url.searchParams.set('language', 'en-US');
+      if (filtered) {
+        url.searchParams.set('sort_by', `${type === 'movie' ? 'primary_release_date' : 'first_air_date'}.desc`);
+        if (filters.genres?.length) url.searchParams.set('with_genres', filters.genres.join('|'));
+        if (filters.creator) url.searchParams.set('with_people', filters.creator);
+        if (Number.isFinite(filters.minRating)) url.searchParams.set('vote_average.gte', String(filters.minRating));
+      }
 
       const controller = new AbortController();
       let timedOut = false;
@@ -356,6 +438,45 @@ export function createTMDBAdapter({
       } finally {
         clearTimeout(timeoutHandle);
       }
+    },
+    async getFilterOptions({ type = 'movie', creatorQuery = '', includeAdult = true } = {}) {
+      if (!SEARCH_TYPES.has(type) || typeof creatorQuery !== 'string' || typeof includeAdult !== 'boolean') throw invalidResponse();
+      if (!normalizedToken) throw providerError(PROVIDER_ERROR_CODES.UNAVAILABLE);
+
+      const headers = { accept: 'application/json', Authorization: `Bearer ${normalizedToken}` };
+      const genreUrl = new URL(`${normalizedDetailsEndpoint}/genre/${type}/list`);
+      genreUrl.searchParams.set('language', 'en-US');
+      const requests = [requestProviderJson({
+        request,
+        url: genreUrl,
+        timeoutMs,
+        options: { method: 'GET', headers },
+        invalidResponse,
+        errorForStatus: (status) => errorForStatus(status, true)
+      })];
+
+      if (creatorQuery.trim()) {
+        const creatorUrl = new URL(`${normalizedDetailsEndpoint}/search/person`);
+        creatorUrl.searchParams.set('query', creatorQuery.trim());
+        creatorUrl.searchParams.set('page', '1');
+        creatorUrl.searchParams.set('include_adult', String(includeAdult));
+        creatorUrl.searchParams.set('language', 'en-US');
+        requests.push(requestProviderJson({
+          request,
+          url: creatorUrl,
+          timeoutMs,
+          options: { method: 'GET', headers },
+          invalidResponse,
+          errorForStatus: (status) => errorForStatus(status, true)
+        }));
+      }
+
+      const [genres, creators = { results: [] }] = await Promise.all(requests);
+      return {
+        genres: normalizeFilterOptions(genres, 'genres'),
+        creators: normalizeCreatorOptions(creators),
+        rating: { field: 'minRating', label: 'Minimum Provider Rating', max: 10, step: 0.5 }
+      };
     },
     async getTrending({ type = 'movie', page = 1, perPage = 12, includeAdult = true } = {}) {
       const options = validateDiscoveryOptions({ type, page, perPage, includeAdult });
@@ -450,6 +571,29 @@ export function createTMDBAdapter({
     },
     getMediaRecommendations(options) {
       return this.getRecommendations(options);
+    },
+    async getSeasonEpisodes({ providerId, season = 1 } = {}) {
+      if (typeof providerId !== 'string' || !/^[1-9]\d*$/.test(providerId.trim()) ||
+          !Number.isInteger(season) || season < 1 || season > 1_000) {
+        throw invalidResponse();
+      }
+      if (!normalizedToken) throw providerError(PROVIDER_ERROR_CODES.UNAVAILABLE);
+
+      const normalizedProviderId = providerId.trim();
+      const url = new URL(`${normalizedDetailsEndpoint}/tv/${normalizedProviderId}/season/${season}`);
+      url.searchParams.set('language', 'en-US');
+      const payload = await requestProviderJson({
+        request,
+        url,
+        timeoutMs,
+        options: {
+          method: 'GET',
+          headers: { accept: 'application/json', Authorization: `Bearer ${normalizedToken}` }
+        },
+        invalidResponse,
+        errorForStatus: (status) => errorForStatus(status)
+      });
+      return normalizeSeasonEpisodes(payload, normalizedProviderId, season, normalizedImageBaseUrl);
     },
     async getMediaDetails({ type = 'movie', providerId, includeAdult = true } = {}) {
       if (!SEARCH_TYPES.has(type) || typeof providerId !== 'string' || !/^[1-9]\d*$/.test(providerId.trim())) {

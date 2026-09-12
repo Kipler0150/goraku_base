@@ -2,9 +2,17 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  username TEXT NOT NULL,
   email TEXT NOT NULL UNIQUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT users_username_is_normalized CHECK (
+    username = lower(username)
+    AND username = btrim(username)
+    AND char_length(username) BETWEEN 3 AND 32
+    AND username ~ '^[a-z0-9_]+$'
+  ),
+  CONSTRAINT users_username_unique UNIQUE (username),
   CONSTRAINT users_email_is_normalized CHECK (email = lower(email) AND email = btrim(email) AND length(email) > 0)
 );
 

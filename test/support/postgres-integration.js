@@ -67,3 +67,20 @@ export function assertSafeResponse(response) {
   const serializedResponse = `${response.text ?? ''}\n${JSON.stringify(response.body ?? '')}`;
   assert.doesNotMatch(serializedResponse, SENSITIVE_RESPONSE_PATTERN);
 }
+
+export function createTestEmailDelivery() {
+  const verificationTokens = new Map();
+  const passwordResetTokens = new Map();
+  return {
+    verificationTokenTtlMs: 24 * 60 * 60 * 1000,
+    passwordResetTokenTtlMs: 60 * 60 * 1000,
+    verificationTokens,
+    passwordResetTokens,
+    async sendVerificationEmail({ to, token }) {
+      verificationTokens.set(to, token);
+    },
+    async sendPasswordResetEmail({ to, token }) {
+      passwordResetTokens.set(to, token);
+    }
+  };
+}

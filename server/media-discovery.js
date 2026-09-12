@@ -93,31 +93,46 @@ function isValidProviderType(provider, type) {
   return Boolean(PROVIDER_CAPABILITY_MATRIX[provider]?.[type]);
 }
 
+function isProviderUnavailable(error) {
+  return error instanceof ProviderError && error.code === PROVIDER_ERROR_CODES.UNAVAILABLE;
+}
+
 function createListService(adapters, operation, onProviderRequest) {
   return async (options) => {
-    const { provider, type, includeAdult = true } = options;
-    if (!isValidProviderType(provider, type) || !supportsProviderCapability(provider, type, operation)) {
-      throw new MediaDiscoveryCapabilityError();
-    }
+    const { provider, type, includeAdult = true, allowFallback = false, ...providerOptions } = options;
+    const loadFromProvider = async (selectedProvider) => {
+      if (!isValidProviderType(selectedProvider, type) || !supportsProviderCapability(selectedProvider, type, operation)) {
+        throw new MediaDiscoveryCapabilityError();
+      }
 
-    const adapter = adapters[provider];
-    if (adapter?.enabled === false) throw new ProviderError(PROVIDER_ERROR_CODES.UNAVAILABLE);
-    const method = adapterMethod(adapter, operation);
-    if (!method) throw new MediaDiscoveryCapabilityError();
+      const adapter = adapters[selectedProvider];
+      if (adapter?.enabled === false) throw new ProviderError(PROVIDER_ERROR_CODES.UNAVAILABLE);
+      const method = adapterMethod(adapter, operation);
+      if (!method) throw new MediaDiscoveryCapabilityError();
+
+      try {
+        onProviderRequest({ provider: selectedProvider, operation });
+      } catch {
+        // Observability must never change Provider behavior.
+      }
+      const result = await method.call(adapter, { ...providerOptions, provider: selectedProvider, type, includeAdult });
+      return normalizeListResult(result, { provider: selectedProvider, type, includeAdult });
+    };
 
     try {
-      onProviderRequest({ provider, operation });
-    } catch {
-      // Observability must never change Provider behavior.
+      return await loadFromProvider(provider);
+    } catch (error) {
+      const canUseAnimeFallback = allowFallback && type === 'anime' && provider === 'myanimelist' && isProviderUnavailable(error);
+      if (!canUseAnimeFallback) throw error;
+      return loadFromProvider('anilist');
     }
-    const result = await method.call(adapter, options);
-    return normalizeListResult(result, { provider, type, includeAdult });
   };
 }
 
 /**
- * Coordinate explicit Provider-owned Discovery and Recommendation pages.
- * This service never merges Providers or applies fallback behavior.
+ * Coordinate Provider-owned Discovery and Recommendation pages.
+ * Server-selected Anime Discovery may fall back from MyAnimeList to AniList
+ * only when MyAnimeList is unavailable; explicit Provider selections stay strict.
  */
 export function createMediaDiscoveryService({
   anilistAdapter,

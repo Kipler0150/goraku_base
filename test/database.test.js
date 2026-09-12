@@ -16,7 +16,7 @@ describe('database boundary', () => {
   it('discovers migrations in version order', async () => {
     const migrations = await getMigrationFiles();
 
-    assert.deepEqual(migrations.map(({ version }) => version), ['001_initial_schema', '002_tracking_schema']);
+    assert.deepEqual(migrations.map(({ version }) => version), ['001_initial_schema', '002_tracking_schema', '003_username_schema', '004_episode_tracking', '005_profile_avatar', '006_verified_email_auth']);
     assert.match(migrations[0].sql, /CREATE TABLE users/i);
     assert.match(migrations[0].sql, /CREATE TABLE library_items/i);
     assert.match(migrations[1].sql, /ALTER TABLE library_items/i);
@@ -24,6 +24,10 @@ describe('database boundary', () => {
     assert.match(migrations[1].sql, /CREATE TABLE collections/i);
     assert.match(migrations[1].sql, /CREATE TABLE library_item_tags/i);
     assert.match(migrations[1].sql, /CREATE TABLE library_item_collections/i);
+    assert.match(migrations[2].sql, /ADD COLUMN IF NOT EXISTS username/i);
+    assert.match(migrations[3].sql, /CREATE TABLE library_item_episodes/i);
+    assert.match(migrations[5].sql, /email_verified_at/i);
+    assert.match(migrations[5].sql, /CREATE TABLE auth_tokens/i);
   });
 
   it('sorts numeric versions correctly when filenames are not zero-padded', async () => {

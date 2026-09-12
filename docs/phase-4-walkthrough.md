@@ -137,7 +137,7 @@ GET /api/media/search?type=all&q=zelda&page=2&cursor=<opaque>&retryProvider=rawg
 
 A valid empty lane is a success, not a Provider Failure. If one or more lanes succeed, the API returns `200` with successful results and safe `{ provider, code, message }` entries for failed lanes. If every lane fails, it returns `503 PROVIDERS_UNAVAILABLE`. Upstream payloads, diagnostics, credentials, and stack traces do not cross the API boundary.
 
-Anime remains one logical lane. AniList is attempted first; MyAnimeList is attempted only for an AniList unavailable error when the fallback is configured. If MyAnimeList covers the lane, the AniList failure is informational and the cursor pins MyAnimeList for later pages. Other AniList failures and valid empty pages do not trigger fallback.
+Anime remains one logical lane. MyAnimeList is attempted first; AniList is attempted only for a MyAnimeList unavailable error. If AniList covers the lane, the MyAnimeList failure is informational and the cursor pins AniList for later pages. Other MyAnimeList failures and valid empty pages do not trigger fallback.
 
 Games follow the same lane-owned fallback model. TheGamesDB is attempted first; RAWG is attempted only for a TheGamesDB unavailable error. If RAWG covers the lane, the TheGamesDB failure is informational and the cursor pins RAWG for later pages. Rate limits, malformed responses, generic failures, and valid empty pages do not trigger fallback.
 

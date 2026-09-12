@@ -5,8 +5,8 @@ import { createApp } from '../server/app.js';
 import { LibraryConflictError, LibraryValidationError } from '../server/library.js';
 
 const APP_ORIGIN = 'http://localhost:5173';
-const USER = { id: 'user-1', email: 'user@example.com' };
-const OTHER_USER = { id: 'user-2', email: 'other@example.com' };
+const USER = { id: 'user-1', username: 'reader', email: 'user@example.com' };
+const OTHER_USER = { id: 'user-2', username: 'other_reader', email: 'other@example.com' };
 const SESSION_COOKIE = 'goraku_session=library-session';
 const OTHER_SESSION_COOKIE = 'goraku_session=other-session';
 const LIBRARY_ITEM_IDS = [
@@ -18,6 +18,7 @@ const LIBRARY_ITEM_IDS = [
 function createLibraryFixture() {
   const calls = [];
   const items = new Map();
+  const watchedEpisodes = new Map();
   const item = {
     id: LIBRARY_ITEM_IDS[0],
     provider: 'thegamesdb',
@@ -82,7 +83,29 @@ function createLibraryFixture() {
         const existing = items.get(input.id);
         if (!existing || existing.userId !== input.userId) return false;
         items.delete(input.id);
+        watchedEpisodes.delete(input.id);
         return true;
+      },
+      async listWatchedEpisodes(input) {
+        calls.push({ method: 'listWatchedEpisodes', ...input });
+        const existing = items.get(input.id);
+        if (!existing || existing.userId !== input.userId) return null;
+        if (!['TV', 'ANIME'].includes(existing.type)) throw new LibraryValidationError('Episode tracking is only supported for TV and Anime Library Items.', [{ field: 'episodes', message: 'Episode tracking is only supported for TV and Anime Library Items.' }]);
+        return { watched: [...(watchedEpisodes.get(input.id) ?? [])].sort((left, right) => left.season - right.season || left.episode - right.episode) };
+      },
+      async updateWatchedEpisodes(input) {
+        calls.push({ method: 'updateWatchedEpisodes', ...input });
+        const existing = items.get(input.id);
+        if (!existing || existing.userId !== input.userId) return null;
+        if (!['TV', 'ANIME'].includes(existing.type)) throw new LibraryValidationError('Episode tracking is only supported for TV and Anime Library Items.', [{ field: 'episodes', message: 'Episode tracking is only supported for TV and Anime Library Items.' }]);
+        const state = watchedEpisodes.get(input.id) ?? [];
+        for (const change of input.episodes) {
+          const index = state.findIndex((episode) => episode.season === change.season && episode.episode === change.episode);
+          if (change.watched && index === -1) state.push({ season: change.season, episode: change.episode });
+          if (!change.watched && index !== -1) state.splice(index, 1);
+        }
+        watchedEpisodes.set(input.id, state);
+        return { watched: [...state].sort((left, right) => left.season - right.season || left.episode - right.episode) };
       },
       async duplicate() {
         throw new LibraryConflictError();
@@ -97,7 +120,8 @@ function createLibraryFixture() {
     },
     calls,
     item,
-    items
+    items,
+    watchedEpisodes
   };
 }
 
@@ -506,6 +530,57 @@ describe('HTTP library routes', () => {
     assert.equal(removed.text, '');
     assert.equal(missingOtherDelete.status, 404);
     assert.equal(missingDelete.status, 404);
+  });
+
+  it('tracks watched TV episodes with ownership, validation, and immediate updates', async () => {
+    const fixture = createLibraryFixture();
+    const app = createApp({ authService: fixture.authService, libraryRepository: fixture.repository, appOrigin: APP_ORIGIN });
+    const created = await request(app)
+      .post('/api/library')
+      .set('Origin', APP_ORIGIN)
+      .set('Cookie', SESSION_COOKIE)
+      .send({ provider: 'tmdb', type: 'tv', providerId: '1002' });
+
+    const initial = await request(app)
+      .get(`/api/library/${created.body.id}/episodes`)
+      .set('Cookie', SESSION_COOKIE);
+    assert.equal(initial.status, 200);
+    assert.deepEqual(initial.body, { watched: [] });
+
+    const watched = await request(app)
+      .put(`/api/library/${created.body.id}/episodes`)
+      .set('Origin', APP_ORIGIN)
+      .set('Cookie', SESSION_COOKIE)
+      .send({ episodes: [{ season: 1, episode: 1, watched: true }, { season: 1, episode: 2, watched: true }] });
+    assert.equal(watched.status, 200);
+    assert.deepEqual(watched.body, { watched: [{ season: 1, episode: 1 }, { season: 1, episode: 2 }] });
+
+    const cleared = await request(app)
+      .put(`/api/library/${created.body.id}/episodes`)
+      .set('Origin', APP_ORIGIN)
+      .set('Cookie', SESSION_COOKIE)
+      .send({ episodes: [{ season: 1, episode: 2, watched: false }] });
+    assert.equal(cleared.status, 200);
+    assert.deepEqual(cleared.body, { watched: [{ season: 1, episode: 1 }] });
+
+    for (const body of [
+      {},
+      { episodes: [{ season: 0, episode: 1, watched: true }] },
+      { episodes: [{ season: 1, episode: 1, watched: 'yes' }] },
+      { episodes: [{ season: 1, episode: 1, watched: true }, { season: 1, episode: 1, watched: false }] }
+    ]) {
+      const invalid = await request(app)
+        .put(`/api/library/${created.body.id}/episodes`)
+        .set('Origin', APP_ORIGIN)
+        .set('Cookie', SESSION_COOKIE)
+        .send(body);
+      assert.equal(invalid.status, 400);
+    }
+
+    const other = await request(app)
+      .get(`/api/library/${created.body.id}/episodes`)
+      .set('Cookie', OTHER_SESSION_COOKIE);
+    assert.equal(other.status, 404);
   });
 
   it('requires authentication before reading or mutating the library', async () => {

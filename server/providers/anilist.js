@@ -15,10 +15,10 @@ const PROVIDER_ERROR_MESSAGES = Object.freeze({
 });
 
 const GRAPHQL_QUERY = `
-  query SearchAnime($search: String!, $page: Int!, $perPage: Int!, $includeAdult: Boolean!) {
+  query SearchAnime($search: String!, $page: Int!, $perPage: Int!, $includeAdult: Boolean!, $genres: [String], $averageScoreGreater: Int, $mediaIds: [Int], $sort: [MediaSort]) {
     Page(page: $page, perPage: $perPage) {
       pageInfo { currentPage perPage hasNextPage }
-      media(search: $search, type: ANIME, isAdult: $includeAdult) {
+      media(search: $search, type: ANIME, isAdult: $includeAdult, genre_in: $genres, averageScore_greater: $averageScoreGreater, id_in: $mediaIds, sort: $sort) {
         id
         title { english romaji native }
         description
@@ -33,6 +33,28 @@ const GRAPHQL_QUERY = `
         episodes
         duration
         isAdult
+      }
+    }
+  }
+`;
+
+const FILTER_OPTIONS_QUERY = `
+  query AnimeFilterOptions($creatorQuery: String, $page: Int!, $perPage: Int!) {
+    GenreCollection
+    Page(page: $page, perPage: $perPage) {
+      staff(search: $creatorQuery) {
+        nodes { id name { full } }
+      }
+    }
+  }
+`;
+
+const STAFF_MEDIA_QUERY = `
+  query StaffAnime($id: Int!, $page: Int!, $perPage: Int!) {
+    Staff(id: $id) {
+      staffMedia(type: ANIME, page: $page, perPage: $perPage) {
+        pageInfo { currentPage perPage hasNextPage }
+        nodes { id }
       }
     }
   }
@@ -101,6 +123,23 @@ ${DISCOVERY_MEDIA_FIELDS}
     }
   }
 `;
+
+const EPISODES_GRAPHQL_QUERY = `
+  query AnimeEpisodes($id: Int, $idMal: Int, $page: Int!, $perPage: Int!, $notYetAired: Boolean!) {
+    Media(id: $id, idMal: $idMal, type: ANIME) {
+      episodes
+      status
+      airingSchedule(page: $page, perPage: $perPage, notYetAired: $notYetAired) {
+        pageInfo { currentPage perPage hasNextPage }
+        nodes { episode airingAt }
+      }
+    }
+  }
+`;
+
+const EPISODE_PAGE_SIZE = 25;
+const MAX_EPISODE_PAGES = 200;
+const MAX_EPISODES = 10_000;
 
 /**
  * A safe, stable error raised by a provider adapter.
@@ -319,6 +358,41 @@ function normalizePayload(payload, includeAdult = true) {
   };
 }
 
+function normalizeFilterOptions(payload, creatorQuery) {
+  const root = assertObject(payload);
+  if (Object.prototype.hasOwnProperty.call(root, 'errors')) throw new ProviderError(PROVIDER_ERROR_CODES.ERROR, 'AniList returned a provider error.');
+  const data = assertObject(root.data);
+  const genres = normalizeStringList(data.GenreCollection).map((name) => ({ id: name, label: name }));
+  const page = assertObject(data.Page);
+  const staff = page.staff == null ? { nodes: [] } : assertObject(page.staff);
+  if (!Array.isArray(staff.nodes)) throw invalidResponse();
+  const creators = creatorQuery
+    ? staff.nodes.map((entry) => {
+        const item = assertObject(entry);
+        if (!Number.isInteger(item.id) || item.id < 1) throw invalidResponse();
+        const name = assertObject(item.name);
+        const label = nullableString(name.full);
+        if (!label) throw invalidResponse();
+        return { id: String(item.id), label };
+      })
+    : [];
+  return { genres, creators, rating: { field: 'minRating', label: 'Minimum Provider Rating', max: 10, step: 0.5 } };
+}
+
+function normalizeStaffMediaPayload(payload, page) {
+  const root = assertObject(payload);
+  if (Object.prototype.hasOwnProperty.call(root, 'errors')) throw new ProviderError(PROVIDER_ERROR_CODES.ERROR, 'AniList returned a provider error.');
+  const staff = assertObject(assertObject(root.data).Staff);
+  const connection = assertObject(staff.staffMedia);
+  const pageInfo = assertObject(connection.pageInfo);
+  if (pageInfo.currentPage !== page || !Number.isInteger(pageInfo.perPage) || typeof pageInfo.hasNextPage !== 'boolean' || !Array.isArray(connection.nodes)) throw invalidResponse();
+  return { pageInfo, ids: connection.nodes.map((entry) => {
+    const item = assertObject(entry);
+    if (!Number.isInteger(item.id) || item.id < 1) throw invalidResponse();
+    return item.id;
+  }) };
+}
+
 function normalizeDetailsPayload(payload) {
   const root = assertObject(payload);
   if (Object.prototype.hasOwnProperty.call(root, 'errors')) {
@@ -373,6 +447,64 @@ function normalizeRecommendationsPayload(payload, includeAdult) {
   };
 }
 
+function normalizeEpisodePagePayload(payload) {
+  const root = assertObject(payload);
+  if (Object.prototype.hasOwnProperty.call(root, 'errors')) {
+    if (!Array.isArray(root.errors)) throw invalidResponse();
+    throw new ProviderError(PROVIDER_ERROR_CODES.ERROR, 'AniList returned a provider error.');
+  }
+  const data = assertObject(root.data);
+  if (data.Media == null) {
+    throw new ProviderError(PROVIDER_ERROR_CODES.NOT_FOUND, PROVIDER_ERROR_MESSAGES[PROVIDER_ERROR_CODES.NOT_FOUND]);
+  }
+  const media = assertObject(data.Media);
+  const episodeCount = media.episodes == null ? null : media.episodes;
+  if (episodeCount !== null && (!Number.isInteger(episodeCount) || episodeCount < 0 || episodeCount > MAX_EPISODES)) {
+    throw invalidResponse();
+  }
+  if (media.status != null && typeof media.status !== 'string') throw invalidResponse();
+
+  const schedule = assertObject(media.airingSchedule);
+  const pageInfo = assertObject(schedule.pageInfo);
+  if (!Number.isInteger(pageInfo.currentPage) || pageInfo.currentPage < 1 ||
+      !Number.isInteger(pageInfo.perPage) || pageInfo.perPage < 1 ||
+      typeof pageInfo.hasNextPage !== 'boolean' || !Array.isArray(schedule.nodes)) {
+    throw invalidResponse();
+  }
+
+  const nodes = schedule.nodes.map((value) => {
+    const node = assertObject(value);
+    if (!Number.isInteger(node.episode) || node.episode < 1 || node.episode > MAX_EPISODES ||
+        !Number.isInteger(node.airingAt) || node.airingAt < 0) {
+      throw invalidResponse();
+    }
+    return { episode: node.episode, airingAt: node.airingAt };
+  });
+
+  return {
+    episodeCount,
+    status: media.status ?? null,
+    pageInfo,
+    nodes
+  };
+}
+
+function episodeAirDate(airingAt) {
+  const date = new Date(airingAt * 1000);
+  if (Number.isNaN(date.getTime())) throw invalidResponse();
+  return { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, day: date.getUTCDate() };
+}
+
+function validateEpisodeLookup({ provider, providerId, season }) {
+  const normalizedProvider = typeof provider === 'string' ? provider.trim().toLowerCase() : '';
+  if (!['anilist', 'myanimelist'].includes(normalizedProvider) ||
+      typeof providerId !== 'string' || !/^[1-9]\d*$/.test(providerId.trim()) ||
+      !Number.isInteger(season) || season !== 1) {
+    throw invalidResponse();
+  }
+  return { provider: normalizedProvider, providerId: providerId.trim(), season };
+}
+
 function errorForStatus(status, isSearchRequest = false) {
   if (!isSearchRequest && status === 404) return new ProviderError(PROVIDER_ERROR_CODES.NOT_FOUND, PROVIDER_ERROR_MESSAGES[PROVIDER_ERROR_CODES.NOT_FOUND]);
   if (status === 403) return new ProviderError(PROVIDER_ERROR_CODES.UNAVAILABLE, PROVIDER_ERROR_MESSAGES[PROVIDER_ERROR_CODES.UNAVAILABLE]);
@@ -389,10 +521,12 @@ function errorForStatus(status, isSearchRequest = false) {
 export function createAniListAdapter({
   request = globalThis.fetch,
   endpoint = ANILIST_ENDPOINT,
-  timeoutMs = ANILIST_TIMEOUT_MS
+  timeoutMs = ANILIST_TIMEOUT_MS,
+  clock = Date.now
 } = {}) {
   if (typeof request !== 'function') throw new TypeError('An HTTP request function is required.');
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new RangeError('timeoutMs must be positive.');
+  if (typeof clock !== 'function') throw new TypeError('clock must be a function.');
 
   const validateDiscoveryOptions = ({ page = 1, perPage = 12, includeAdult = true } = {}) => {
     if (!Number.isInteger(page) || page < 1 || !Number.isInteger(perPage) || perPage < 1 || typeof includeAdult !== 'boolean') {
@@ -401,8 +535,36 @@ export function createAniListAdapter({
     return { page, perPage, includeAdult };
   };
 
+  const graphQLRequest = (query, variables, errorStatus = false) => requestProviderJson({
+    request,
+    url: endpoint,
+    timeoutMs,
+    options: {
+      method: 'POST',
+      headers: { accept: 'application/json', 'content-type': 'application/json' },
+      body: JSON.stringify({ query, variables })
+    },
+    invalidResponse,
+    errorForStatus: (status) => errorForStatus(status, errorStatus)
+  });
+
+  const resolveStaffMediaIds = async (creatorId) => {
+    const ids = [];
+    let page = 1;
+    let hasNextPage = true;
+    while (hasNextPage && page <= 40) {
+      const payload = await graphQLRequest(STAFF_MEDIA_QUERY, { id: Number(creatorId), page, perPage: 50 });
+      const result = normalizeStaffMediaPayload(payload, page);
+      ids.push(...result.ids);
+      hasNextPage = result.pageInfo.hasNextPage;
+      page += 1;
+    }
+    if (hasNextPage) throw invalidResponse();
+    return [...new Set(ids)].slice(0, 2_000);
+  };
+
   return {
-    async searchMedia({ query, page = 1, perPage = 12, includeAdult = true } = {}) {
+    async searchMedia({ query, page = 1, perPage = 12, includeAdult = true, filters = null } = {}) {
       const controller = new AbortController();
       let timedOut = false;
       let timeoutHandle;
@@ -415,6 +577,15 @@ export function createAniListAdapter({
       });
 
       try {
+        const mediaIds = filters?.creator ? await resolveStaffMediaIds(filters.creator) : null;
+        if (mediaIds && mediaIds.length === 0) {
+          return { results: [], pagination: { page, perPage, hasMore: false } };
+        }
+        const variables = { search: query, page, perPage, includeAdult };
+        if (filters?.genres?.length) variables.genres = filters.genres;
+        if (Number.isFinite(filters?.minRating)) variables.averageScoreGreater = Math.round(filters.minRating * 10);
+        if (mediaIds) variables.mediaIds = mediaIds;
+        if (!query.trim()) variables.sort = ['START_DATE_DESC'];
         const requestResult = await Promise.race([
           Promise.resolve().then(() => request(endpoint, {
             method: 'POST',
@@ -424,7 +595,7 @@ export function createAniListAdapter({
             },
             body: JSON.stringify({
               query: GRAPHQL_QUERY,
-              variables: { search: query, page, perPage, includeAdult }
+              variables
             }),
             signal: controller.signal
           })),
@@ -454,6 +625,15 @@ export function createAniListAdapter({
       } finally {
         clearTimeout(timeoutHandle);
       }
+    },
+    async getFilterOptions({ type = 'anime', creatorQuery = '', includeAdult = true } = {}) {
+      if (type !== 'anime' || typeof creatorQuery !== 'string' || typeof includeAdult !== 'boolean') throw invalidResponse();
+      const payload = await graphQLRequest(FILTER_OPTIONS_QUERY, {
+        creatorQuery: creatorQuery.trim() || null,
+        page: 1,
+        perPage: 10
+      }, true);
+      return normalizeFilterOptions(payload, creatorQuery.trim());
     },
     async searchAnime(options) {
       return this.searchMedia(options);
@@ -534,6 +714,75 @@ export function createAniListAdapter({
         errorForStatus: (status) => errorForStatus(status)
       });
       return normalizeRecommendationsPayload(payload, includeAdult);
+    },
+    async getSeasonEpisodes({ provider = 'anilist', providerId, season = 1 } = {}) {
+      const lookup = validateEpisodeLookup({ provider, providerId, season });
+      const now = clock();
+      if (!Number.isFinite(now)) throw invalidResponse();
+
+      const variables = {
+        page: 1,
+        perPage: EPISODE_PAGE_SIZE,
+        notYetAired: false
+      };
+      if (lookup.provider === 'anilist') variables.id = Number(lookup.providerId);
+      else variables.idMal = Number(lookup.providerId);
+      const released = new Map();
+      let episodeCount = null;
+      let status = null;
+      let hasNextPage = true;
+      let page = 1;
+
+      while (hasNextPage) {
+        const payload = await requestProviderJson({
+          request,
+          url: endpoint,
+          timeoutMs,
+          options: {
+            method: 'POST',
+            headers: { accept: 'application/json', 'content-type': 'application/json' },
+            body: JSON.stringify({
+              query: EPISODES_GRAPHQL_QUERY,
+              variables: { ...variables, page }
+            })
+          },
+          invalidResponse,
+          errorForStatus: (responseStatus) => errorForStatus(responseStatus)
+        });
+        const result = normalizeEpisodePagePayload(payload);
+        if (result.pageInfo.currentPage !== page) throw invalidResponse();
+        episodeCount ??= result.episodeCount;
+        status ??= result.status;
+        for (const node of result.nodes) {
+          if (node.airingAt > Math.floor(now / 1000) || released.has(node.episode)) continue;
+          released.set(node.episode, episodeAirDate(node.airingAt));
+        }
+        hasNextPage = result.pageInfo.hasNextPage;
+        page += 1;
+        if (hasNextPage && page > MAX_EPISODE_PAGES) throw invalidResponse();
+      }
+
+      const maxReleasedEpisode = Math.max(0, ...released.keys());
+      const completeEpisodeCount = status === 'FINISHED' && episodeCount != null ? episodeCount : maxReleasedEpisode;
+      const totalEpisodes = Math.max(maxReleasedEpisode, completeEpisodeCount);
+      const episodes = Array.from({ length: totalEpisodes }, (_, index) => {
+        const number = index + 1;
+        return {
+          number,
+          title: `Episode ${number}`,
+          airDate: released.get(number) ?? null,
+          runtimeMinutes: null,
+          image: null
+        };
+      });
+
+      return {
+        provider: lookup.provider,
+        providerId: lookup.providerId,
+        type: 'ANIME',
+        season: lookup.season,
+        episodes
+      };
     },
     getTrendingMedia(options) {
       return this.getTrending(options);

@@ -20,7 +20,7 @@ function assertUnauthenticated(response) {
 }
 
 describe('Phase 6 private HTTP boundary', () => {
-  it('rejects every private Library, Tag, Collection, and membership route before persistence', async () => {
+  it('rejects every private Library, profile, Tag, Collection, and membership route before persistence', async () => {
     const calls = [];
     const repository = new Proxy({}, {
       get(_target, property) {
@@ -38,6 +38,9 @@ describe('Phase 6 private HTTP boundary', () => {
     });
 
     const requests = [
+      request(app).get('/api/auth/avatar'),
+      request(app).put('/api/auth/avatar').set('Origin', APP_ORIGIN).set('Content-Type', 'image/png').send(Buffer.from('avatar')),
+      request(app).delete('/api/auth/avatar').set('Origin', APP_ORIGIN),
       request(app).get('/api/library'),
       request(app).post('/api/library').set('Origin', APP_ORIGIN).send({ provider: 'tmdb', type: 'movie', providerId: '42' }),
       request(app).patch(`/api/library/${VALID_ID}`).set('Origin', APP_ORIGIN).send({ favorite: true }),

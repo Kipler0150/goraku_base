@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import {
   createTMDBAdapter,
   TMDB_ENDPOINT,
+  TMDB_DETAILS_ENDPOINT,
   TMDB_PAGE_SIZE
 } from '../server/providers/tmdb.js';
 
@@ -158,6 +159,57 @@ describe('TMDB adapter', () => {
       metadata: { seasonCount: null, episodeCount: null }
     });
     assert.deepEqual(result.pagination, { page: 1, perPage: TMDB_PAGE_SIZE, hasMore: false });
+  });
+
+  it('normalizes released regular TV episodes and requests one season at a time', async () => {
+    let request;
+    const adapter = createTMDBAdapter({
+      accessToken: 'fixture-access-token',
+      detailsEndpoint: `${TMDB_DETAILS_ENDPOINT}/test`,
+      imageBaseUrl: 'https://images.example/t/p',
+      request: async (url, options) => {
+        request = { url, options };
+        return response({
+          id: 1002,
+          season_number: 2,
+          episodes: [
+            { episode_number: 0, name: 'Special', air_date: '2024-01-01' },
+            { episode_number: 1, name: 'The Return', air_date: '2024-02-01', runtime: 46, still_path: '/return.jpg' },
+            { episode_number: 2, name: null, air_date: '2024-02-08', runtime: null, still_path: null },
+            { episode_number: 3, name: 'Future', air_date: '2099-01-01', runtime: 42, still_path: null },
+            { episode_number: 4, name: 'Undated', air_date: null, runtime: 42, still_path: null }
+          ]
+        });
+      }
+    });
+
+    const result = await adapter.getSeasonEpisodes({ providerId: '1002', season: 2 });
+    const requestUrl = new URL(request.url);
+    assert.equal(requestUrl.origin + requestUrl.pathname, 'https://api.themoviedb.org/3/test/tv/1002/season/2');
+    assert.equal(requestUrl.searchParams.get('language'), 'en-US');
+    assert.equal(request.options.headers.Authorization, 'Bearer fixture-access-token');
+    assert.deepEqual(result, {
+      provider: 'tmdb',
+      providerId: '1002',
+      type: 'TV',
+      season: 2,
+      episodes: [
+        {
+          number: 1,
+          title: 'The Return',
+          airDate: { year: 2024, month: 2, day: 1 },
+          runtimeMinutes: 46,
+          image: 'https://images.example/t/p/w500/return.jpg'
+        },
+        {
+          number: 2,
+          title: 'Episode 2',
+          airDate: { year: 2024, month: 2, day: 8 },
+          runtimeMinutes: null,
+          image: null
+        }
+      ]
+    });
   });
 
   it('maps missing credentials, provider failures, malformed payloads, and timeouts to safe errors', async () => {

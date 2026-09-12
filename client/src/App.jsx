@@ -1,78 +1,30 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { useHealthCheck } from './hooks/useHealthCheck.js';
 import { useAuth } from './hooks/useAuth.js';
 import { useLibrary } from './hooks/useLibrary.js';
-import { useMediaSearch } from './hooks/useMediaSearch.js';
+import { hasActiveSearchFilters, useMediaSearch } from './hooks/useMediaSearch.js';
+import { useMediaFilterOptions } from './hooks/useMediaFilterOptions.js';
 import { useMediaDetails } from './hooks/useMediaDetails.js';
 import { useMediaDiscovery } from './hooks/useMediaDiscovery.js';
 import { useMediaRecommendations } from './hooks/useMediaRecommendations.js';
+import { useMediaEpisodes } from './hooks/useMediaEpisodes.js';
 import { useTaxonomy } from './hooks/useTaxonomy.js';
 import { LIBRARY_STATUS_VALUES } from './api/library.js';
 import { mediaIdentity } from './mediaIdentity.js';
 import { useLibraryMedia } from './hooks/useLibraryMedia.js';
 import './styles.css';
 
-const TMDB_URL = 'https://www.themoviedb.org/';
-const TMDB_LOGO_URL = 'https://www.themoviedb.org/assets/2/v4/logos/primary-green.svg';
-const TMDB_NOTICE = 'This product uses the TMDB API but is not endorsed or certified by TMDB.';
-const ANILIST_URL = 'https://anilist.co/';
-const MYANIMELIST_URL = 'https://myanimelist.net/';
-const THEGAMESDB_URL = 'https://thegamesdb.net/';
-const RAWG_URL = 'https://rawg.io/';
 const THEME_STORAGE_KEY = 'goraku-base-theme';
+const PROFILE_AVATAR_FALLBACK = '/mainIcon.svg';
+const PROFILE_AVATAR_MAX_BYTES = 2 * 1024 * 1024;
+const PROFILE_AVATAR_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
 const PROVIDERS = Object.freeze({
-  anilist: { label: 'AniList', url: ANILIST_URL },
-  myanimelist: { label: 'MyAnimeList', url: MYANIMELIST_URL },
-  tmdb: { label: 'TMDB', url: TMDB_URL },
-  thegamesdb: { label: 'TheGamesDB', url: THEGAMESDB_URL },
-  rawg: { label: 'RAWG', url: RAWG_URL }
+  anilist: { label: 'AniList' },
+  myanimelist: { label: 'MyAnimeList' },
+  tmdb: { label: 'TMDB' },
+  thegamesdb: { label: 'TheGamesDB' },
+  rawg: { label: 'RAWG' }
 });
-const PROVIDER_ORDER = Object.freeze(['anilist', 'myanimelist', 'tmdb', 'thegamesdb', 'rawg']);
-const DISCOVERY_PROVIDERS = Object.freeze({
-  anime: ['anilist', 'myanimelist'],
-  movie: ['tmdb'],
-  tv: ['tmdb'],
-  game: ['thegamesdb', 'rawg']
-});
-
-function getDiscoveryProviders(type) {
-  return DISCOVERY_PROVIDERS[type] ?? [];
-}
-
-function ConnectionStatus({ status, error, onRetry }) {
-  const isLoading = status === 'loading';
-  const isConnected = status === 'connected';
-
-  const title = isLoading
-    ? 'Checking backend connection'
-    : isConnected
-      ? 'Backend connected'
-      : 'Backend unavailable';
-  const message = isLoading
-    ? 'Sending a bounded request to the local API.'
-    : isConnected
-      ? 'goraku-base-api answered with a valid health payload.'
-      : error?.code === 'TIMEOUT'
-        ? 'The API did not respond in time. Start Express, then try again.'
-        : 'The API could not confirm its health. Start Express, then try again.';
-
-  return (
-    <div className={`connection-status connection-status--${status}`} role="status" aria-live="polite" aria-atomic="true">
-      <span className="status-signal" aria-hidden="true" />
-      <div className="status-copy">
-        <strong>{title}</strong>
-        <span>{message}</span>
-      </div>
-      {!isLoading && !isConnected && (
-        <button type="button" className="retry-button" onClick={onRetry}>
-          Retry connection
-        </button>
-      )}
-    </div>
-  );
-}
-
 function SignalMark() {
   return (
     <svg className="signal-mark" viewBox="0 0 48 48" aria-hidden="true">
@@ -92,6 +44,27 @@ function formatMetadataCount(value, suffix, unavailableLabel = `${suffix} unavai
 
 function formatMetadataList(value, label) {
   return Array.isArray(value) && value.length > 0 ? value.join(', ') : `${label} unavailable`;
+}
+
+function creatorPriority(role) {
+  const normalizedRole = typeof role === 'string' ? role.toLowerCase() : '';
+  if (normalizedRole.includes('director')) return 0;
+  if (normalizedRole.includes('creator') || normalizedRole.includes('showrunner')) return 1;
+  if (['writer', 'screenplay', 'story', 'series composition'].some((keyword) => normalizedRole.includes(keyword))) return 2;
+  if (normalizedRole.includes('executive producer')) return 3;
+  if (normalizedRole.includes('producer')) return 4;
+  return 5;
+}
+
+function formatPrimaryCreators(creators) {
+  if (!Array.isArray(creators)) return 'Creators unavailable';
+  const uniqueCreators = creators
+    .filter((creator) => creator && typeof creator.name === 'string' && creator.name.trim())
+    .map((creator, index) => ({ name: creator.name.trim(), role: creator.role, index }))
+    .filter((creator, index, values) => values.findIndex((candidate) => candidate.name === creator.name) === index)
+    .sort((left, right) => creatorPriority(left.role) - creatorPriority(right.role) || left.index - right.index)
+    .slice(0, 5);
+  return uniqueCreators.length > 0 ? uniqueCreators.map((creator) => creator.name).join(', ') : 'Creators unavailable';
 }
 
 function formatCardReleaseDate(releaseDate) {
@@ -164,6 +137,14 @@ function getMediaTypeNoun(type) {
   return 'all media';
 }
 
+function getBookmarkNoun(type) {
+  if (type === 'ANIME') return 'anime';
+  if (type === 'MOVIE') return 'movie';
+  if (type === 'TV') return 'TV show';
+  if (type === 'GAME') return 'game';
+  return 'item';
+}
+
 function getCardFacts(media) {
   if (media.type === 'MOVIE') {
     return [['Runtime', formatMetadataCount(media.metadata?.runtimeMinutes, 'Minutes', 'Runtime unavailable')]];
@@ -187,16 +168,6 @@ function getCardFacts(media) {
   ];
 }
 
-function ProviderAttributionLink({ provider }) {
-  const providerInfo = PROVIDERS[provider];
-  if (!providerInfo) return <span>{getProviderLabel(provider)}</span>;
-  return (
-    <a href={providerInfo.url} target="_blank" rel="noreferrer">
-      {providerInfo.label}
-    </a>
-  );
-}
-
 function HomeIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 11 8-7 8 7v8a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1v-8Z" /></svg>;
 }
@@ -209,12 +180,25 @@ function LibraryIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4.5h11a3 3 0 0 1 3 3V19H8a3 3 0 0 1-3-3V4.5Z" /><path d="M8 19h11M8 8h7M8 12h7" /></svg>;
 }
 
-function InfoIcon() {
-  return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7h.01" /></svg>;
-}
-
 function UserIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.2" /><path d="M5.5 20c.7-3.2 3-5 6.5-5s5.8 1.8 6.5 5" /></svg>;
+}
+
+function EditIcon() {
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5.5 4 4M5 19l3.5-.8L19.2 7.5a1.7 1.7 0 0 0 0-2.4l-.3-.3a1.7 1.7 0 0 0-2.4 0L5.8 15.5 5 19Z" /></svg>;
+}
+
+function CatalogIcon({ type }) {
+  if (type === 'anime') {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5h10l2.5 2.5v10L17 19.5H7L4.5 17V7L7 4.5Z" /><path d="m10 9 5 3-5 3V9Z" /></svg>;
+  }
+  if (type === 'movie') {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2" /><path d="M4 9h16M4 15h16M8 5v4M16 5v4M8 15v4M16 15v4" /></svg>;
+  }
+  if (type === 'tv') {
+    return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="6" width="16" height="11" rx="2" /><path d="m9 3 3 3 3-3M9 21h6M12 17v4" /></svg>;
+  }
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 9h9a4.5 4.5 0 0 1 4.2 6.1l-1 2.5a2 2 0 0 1-3.5.4l-1.2-1.8H9l-1.2 1.8a2 2 0 0 1-3.5-.4l-1-2.5A4.5 4.5 0 0 1 7.5 9Z" /><path d="M8 12v4M6 14h4M16.5 13h.01M18.5 15h.01" /></svg>;
 }
 
 function SunIcon() {
@@ -239,8 +223,50 @@ function ThemeToggle({ theme, onToggle }) {
   return (
     <button type="button" className="theme-toggle" onClick={onToggle} aria-label={label} title={label}>
       <span className="theme-toggle__icon">{theme === 'dark' ? <SunIcon /> : <MoonIcon />}</span>
-      <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
     </button>
+  );
+}
+
+function getUserAvatarSource(user) {
+  if (!user?.avatarUpdatedAt) return PROFILE_AVATAR_FALLBACK;
+  return `/api/auth/avatar?v=${encodeURIComponent(user.avatarUpdatedAt)}`;
+}
+
+function UserAvatar({ user, previewUrl = null, className = '' }) {
+  const source = previewUrl ?? getUserAvatarSource(user);
+  const [failedSource, setFailedSource] = useState(null);
+  const imageSource = failedSource === source ? PROFILE_AVATAR_FALLBACK : source;
+
+  useEffect(() => {
+    setFailedSource(null);
+  }, [source]);
+
+  return (
+    <span className={`user-avatar ${className}`.trim()} aria-hidden="true">
+      <img
+        src={imageSource}
+        alt=""
+        onError={imageSource === PROFILE_AVATAR_FALLBACK ? undefined : () => setFailedSource(source)}
+      />
+    </span>
+  );
+}
+
+function AuthActions({ user, onOpenAuth }) {
+  if (user) {
+    return (
+      <button type="button" className="topbar-user" onClick={() => onOpenAuth('account')}>
+        <UserAvatar user={user} className="user-avatar--topbar" />
+        <span>{user.username}</span>
+      </button>
+    );
+  }
+
+  return (
+    <div className="topbar-auth" aria-label="Account actions">
+      <button type="button" className="topbar-auth__link" onClick={() => onOpenAuth('login')}>Sign in</button>
+      <button type="button" className="search-action search-action--primary" onClick={() => onOpenAuth('register')}>Sign up</button>
+    </div>
   );
 }
 
@@ -258,7 +284,24 @@ function MediaCard({ media, user, library, onSave, onRequestSignIn, onViewDetail
   const identity = mediaIdentity(media);
   const isSaving = library.isSaveBusy(identity);
   const isSaved = library.isSaved(media);
+  const isRemoving = library.isRemoveBusy(media);
   const cardInteractive = Boolean(onViewDetails);
+  const isDetailCard = !cardInteractive;
+  const bookmarkNoun = getBookmarkNoun(media.type);
+  const bookmarkLabel = isSaving
+    ? 'Saving to library'
+    : isRemoving
+      ? 'Removing from library'
+      : isSaved
+        ? `Remove this ${bookmarkNoun}`
+        : `Bookmark this ${bookmarkNoun}`;
+  const compactBookmarkLabel = isSaving
+    ? 'Saving to library'
+    : isRemoving
+      ? 'Removing from library'
+      : isSaved
+        ? 'Remove from library'
+        : 'Save to library';
   const CardSurface = cardInteractive ? 'button' : 'div';
   const cardSurfaceProps = cardInteractive
     ? {
@@ -295,16 +338,164 @@ function MediaCard({ media, user, library, onSave, onRequestSignIn, onViewDetail
       </CardSurface>
       <button
         type="button"
-        className="media-card__bookmark"
-        onClick={() => user ? onSave(media) : onRequestSignIn(media)}
-        disabled={isSaved || isSaving}
-        aria-label={isSaving ? 'Saving to library' : isSaved ? 'Saved to library' : 'Save to library'}
-        title={isSaving ? 'Saving ' + title + ' to library' : isSaved ? title + ' saved to library' : 'Save ' + title + ' to library'}
+        className={'media-card__bookmark' + (isDetailCard ? ' media-card__bookmark--detail' : '')}
+        onClick={() => {
+          if (!user) onRequestSignIn(media);
+          else if (isSaved) library.removeMedia(media);
+          else onSave(media);
+        }}
+        disabled={isSaving || isRemoving}
+        aria-label={isDetailCard ? bookmarkLabel : compactBookmarkLabel}
+        title={isDetailCard ? bookmarkLabel : isSaving ? 'Saving ' + title + ' to library' : isRemoving ? 'Removing ' + title + ' from library' : isSaved ? 'Remove ' + title + ' from library' : 'Save ' + title + ' to library'}
       >
         <BookmarkIcon filled={isSaved} />
-        <span className="visually-hidden">{isSaving ? 'Saving to library' : isSaved ? 'Saved to library' : 'Save to library'}</span>
+        {isDetailCard ? <span>{bookmarkLabel}</span> : <span className="visually-hidden">{compactBookmarkLabel}</span>}
       </button>
     </article>
+  );
+}
+
+function SaveDestinationDialog({ media, onSave, onClose, taxonomy }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [saveMode, setSaveMode] = useState('');
+  const [tagId, setTagId] = useState('');
+  const [collectionId, setCollectionId] = useState('');
+  const dialogRef = useRef(null);
+  const modeRef = useRef(null);
+
+  useEffect(() => {
+    if (!media) return undefined;
+    const previousFocus = document.activeElement;
+    setBusy(false);
+    setError('');
+    setSaveMode('');
+    setTagId('');
+    setCollectionId('');
+    modeRef.current?.focus();
+    return () => previousFocus?.focus?.();
+  }, [media]);
+
+  useEffect(() => {
+    if (!media) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape' && !busy) {
+        onClose();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = [...dialogRef.current?.querySelectorAll('button:not(:disabled), select:not(:disabled)') ?? []];
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (event.shiftKey && (document.activeElement === first || !dialogRef.current?.contains(document.activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [busy, media, onClose]);
+
+  if (!media) return null;
+
+  const title = media.title || 'this title';
+  const save = async (destination) => {
+    setBusy(true);
+    setError('');
+    const result = await onSave(media, destination);
+    if (!result) {
+      setError('This item could not be saved. Try again.');
+      setBusy(false);
+      return;
+    }
+    if (result.attached === false) {
+      const destinationNames = (Array.isArray(destination) ? destination : [destination]).map(({ resource }) => resource.name).join(' and ');
+      setError(`Saved to your library, but could not add it to ${destinationNames}. You can retry from My Library.`);
+      setBusy(false);
+      return;
+    }
+    onClose();
+  };
+  const handleModeChange = (event) => {
+    const nextMode = event.target.value;
+    setSaveMode(nextMode);
+    setTagId('');
+    setCollectionId('');
+    if (nextMode === 'library') save(null);
+  };
+  const handleDestinationChange = (kind, event) => {
+    const nextId = event.target.value;
+    const nextTagId = kind === 'tag' ? nextId : tagId;
+    const nextCollectionId = kind === 'collection' ? nextId : collectionId;
+    if (kind === 'tag') setTagId(nextId);
+    if (kind === 'collection') setCollectionId(nextId);
+    if (!nextId) return;
+    if (saveMode === 'tag-collection') {
+      if (!nextTagId || !nextCollectionId) return;
+      const tag = taxonomy.tags.find((candidate) => candidate.id === nextTagId);
+      const collection = taxonomy.collections.find((candidate) => candidate.id === nextCollectionId);
+      if (tag && collection) save([
+        { kind: 'tag', resource: tag },
+        { kind: 'collection', resource: collection }
+      ]);
+      return;
+    }
+    const resources = kind === 'tag' ? taxonomy.tags : taxonomy.collections;
+    const resource = resources.find((candidate) => candidate.id === nextId);
+    if (resource) save({ kind, resource });
+  };
+
+  return (
+    <div
+      className="save-destination-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) onClose();
+      }}
+    >
+      <section ref={dialogRef} className="save-destination" role="dialog" aria-modal="true" aria-labelledby="save-destination-title">
+        <h2 id="save-destination-title">Save {title}</h2>
+        <p className="save-destination__intro">Choose how to save this item.</p>
+        <div className="save-destination__groups">
+          <label className="save-destination__field" htmlFor="save-destination-mode">
+            Save method
+            <select ref={modeRef} id="save-destination-mode" value={saveMode} onChange={handleModeChange} disabled={busy}>
+              <option value="" disabled>Choose a save method</option>
+              <option value="library">Save to Library Only</option>
+              <option value="tag" disabled={taxonomy.tags.length === 0}>Save to Tags</option>
+              <option value="collection" disabled={taxonomy.collections.length === 0}>Save to Collection</option>
+              <option value="tag-collection" disabled={taxonomy.tags.length === 0 || taxonomy.collections.length === 0}>Save to Tags and Collection</option>
+            </select>
+          </label>
+          {(saveMode === 'tag' || saveMode === 'tag-collection') && (
+            <label className="save-destination__field" htmlFor="save-destination-tag">
+              Tag
+              <select id="save-destination-tag" value={tagId} onChange={(event) => handleDestinationChange('tag', event)} disabled={busy}>
+                <option value="" disabled>Choose a tag</option>
+                {taxonomy.tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
+              </select>
+            </label>
+          )}
+          {(saveMode === 'collection' || saveMode === 'tag-collection') && (
+            <label className="save-destination__field" htmlFor="save-destination-collection">
+              Collection
+              <select id="save-destination-collection" value={collectionId} onChange={(event) => handleDestinationChange('collection', event)} disabled={busy}>
+                <option value="" disabled>Choose a collection</option>
+                {taxonomy.collections.map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}
+              </select>
+            </label>
+          )}
+        </div>
+        {error && <p className="save-destination__error" role="alert">{error}</p>}
+        <div className="save-destination__footer">
+          <button type="button" className="text-action text-action--quiet" onClick={onClose} disabled={busy}>Cancel</button>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -341,46 +532,6 @@ function getProviderLabel(provider) {
   return PROVIDERS[provider]?.label ?? provider?.toUpperCase() ?? 'Provider';
 }
 
-function getCurrentProviders(search) {
-  const resultProviders = new Set(search.state.results.map((media) => media.provider));
-  const orderedProviders = PROVIDER_ORDER.filter((provider) => resultProviders.has(provider));
-  const unknownProviders = [...resultProviders].filter((provider) => !PROVIDERS[provider]);
-  const providers = [...orderedProviders, ...unknownProviders];
-  if (providers.length > 0) return providers;
-  if (search.state.source && search.state.source !== 'combined') return [search.state.source];
-  if (search.type === 'anime') return ['anilist', 'myanimelist'];
-  return [];
-}
-
-function ProviderAttribution({ search }) {
-  const providers = getCurrentProviders(search);
-  if (providers.length === 0) return `SEARCHING ${getMediaTypeLabel(search.type).toUpperCase()} CATALOG`;
-
-  if (providers.length === 1) {
-    const provider = providers[0];
-    return (
-      <a href={PROVIDERS[provider]?.url} target="_blank" rel="noreferrer">
-        UNOFFICIAL {getProviderLabel(provider).toUpperCase()} INTEGRATION
-      </a>
-    );
-  }
-
-  return (
-    <>
-      <span>UNOFFICIAL </span>
-      {providers.map((provider, index) => (
-        <span key={provider}>
-          {index > 0 && ' / '}
-          <a href={PROVIDERS[provider]?.url} target="_blank" rel="noreferrer">
-            {getProviderLabel(provider).toUpperCase()}
-          </a>
-        </span>
-      ))}
-      <span>{providers.length > 1 ? ' INTEGRATIONS' : ' INTEGRATION'}</span>
-    </>
-  );
-}
-
 function getCombinedGroups(results) {
   return COMBINED_GROUPS
     .map((group) => ({
@@ -392,8 +543,8 @@ function getCombinedGroups(results) {
 
 function isRetryableProviderError(provider, pagination) {
   if (!pagination?.continuation) return false;
-  // AniList errors covered by a successful MyAnimeList fallback are informational.
-  if (provider === 'anilist' && pagination.providers?.myanimelist && !pagination.providers?.anilist) return false;
+  // MyAnimeList errors covered by a successful AniList fallback are informational.
+  if (provider === 'myanimelist' && pagination.providers?.anilist && !pagination.providers?.myanimelist) return false;
   // TheGamesDB errors covered by a successful RAWG fallback are informational.
   if (provider === 'thegamesdb' && pagination.providers?.rawg && !pagination.providers?.thegamesdb) return false;
   return true;
@@ -424,7 +575,7 @@ function ProviderFailureNotices({ search, isBusy }) {
                 </button>
               ) : (
                 <span className="provider-errors__detail">
-                  {provider === 'anilist' ? 'Anime results are using MyAnimeList.' : 'Game results are using RAWG.'}
+                  {provider === 'myanimelist' ? 'Anime results are using AniList.' : 'Game results are using RAWG.'}
                 </span>
               )}
             </li>
@@ -485,17 +636,30 @@ function SearchResults({ search, user, library, onSave, onRequestSignIn, onViewD
   const { state, isBusy, retrySearch, loadMore, retryPage } = search;
   const typeLabel = getMediaTypeLabel(search.type);
   const typeNoun = getMediaTypeNoun(search.type);
+  const filtered = hasActiveSearchFilters(state.filters);
+  const searchTarget = state.query
+    ? filtered
+      ? `selected ${typeNoun} filters`
+      : `${typeNoun} for ${state.query}`
+    : filtered
+      ? `latest ${typeNoun} releases matching selected filters`
+      : `latest ${typeNoun} releases`;
+  const loadMoreLabel = state.query
+    ? `Load more ${typeNoun} results for ${state.query}`
+    : `Load more ${searchTarget}`;
   const statusMessage = state.status === 'initial'
-    ? `Ready to search ${typeNoun}.`
+    ? 'Ready to browse latest releases or search by title.'
     : state.status === 'loading'
-      ? `Searching ${typeNoun} for ${state.query}.`
+      ? `${state.query ? 'Searching' : 'Loading'} ${searchTarget}.`
       : state.loadingPage
-        ? `Loading more ${typeNoun} results for ${state.query}.`
-      : state.status === 'error'
+        ? `Loading more ${searchTarget}.`
+        : state.status === 'error'
         ? `${typeLabel} search is unavailable.`
         : state.results.length === 0
-          ? `No ${typeNoun} results for ${state.query}.`
-          : `${state.results.length} ${typeNoun} results loaded.`;
+          ? state.query
+            ? `No ${typeNoun} results for ${state.query}.`
+            : `No ${searchTarget} found.`
+          : `${state.results.length} ${state.query ? `${typeNoun} results` : searchTarget} loaded.`;
 
   return (
     <div className="search-results" id="media-results" role="region" aria-label={`${typeLabel} search results`} aria-busy={isBusy}>
@@ -504,14 +668,14 @@ function SearchResults({ search, user, library, onSave, onRequestSignIn, onViewD
       {state.status === 'initial' && (
         <SearchState>
           <span className="state-mark" aria-hidden="true">/ / /</span>
-          <h3>Start with a title.</h3>
-          <p>Search the {typeNoun} catalog through the Goraku Base signal.</p>
+          <h3>Browse the latest releases.</h3>
+          <p>Search the {typeNoun} catalog by title, or leave the title blank to see what just released.</p>
         </SearchState>
       )}
 
       {state.status === 'loading' && (
         <>
-          <p className="visually-hidden">Searching. Results will appear below.</p>
+          <p className="visually-hidden">{state.query ? 'Searching' : 'Loading latest releases'}. Results will appear below.</p>
           <SearchSkeletons />
         </>
       )}
@@ -527,11 +691,15 @@ function SearchResults({ search, user, library, onSave, onRequestSignIn, onViewD
 
       {state.status === 'success' && <ProviderFailureNotices search={search} isBusy={isBusy} />}
 
+      {state.status === 'success' && filtered && state.source && (
+        <p className="search-results__source" role="status">Filtered by {getProviderLabel(state.source)}.</p>
+      )}
+
       {state.status === 'success' && state.results.length === 0 && (
         <SearchState>
           <span className="state-mark" aria-hidden="true">0</span>
-          <h3>No results for “{state.query}”.</h3>
-          <p>Try a shorter title, an alternate spelling, or another {typeNoun === 'TV' ? 'series' : 'title'}.</p>
+          <h3>{filtered ? 'No matches for these filters.' : state.query ? `No results for “${state.query}”.` : 'No latest releases found.'}</h3>
+          <p>{filtered ? 'Adjust the selected filters and search again.' : state.query ? `Try a shorter title, an alternate spelling, or another ${typeNoun === 'TV' ? 'series' : 'title'}.` : 'Try again later or choose another catalog.'}</p>
         </SearchState>
       )}
 
@@ -574,7 +742,7 @@ function SearchResults({ search, user, library, onSave, onRequestSignIn, onViewD
                 className="search-action search-action--primary"
                 onClick={loadMore}
                 disabled={isBusy}
-                aria-label={`Load more ${typeNoun} results for ${state.query}`}
+                aria-label={loadMoreLabel}
               >
                 {state.loadingPage ? 'Loading more…' : 'Load more'}
               </button>
@@ -592,11 +760,11 @@ function PublicMediaError({ error, onRetry, resource = 'Media' }) {
   const copy = {
     unsupported: {
       title: 'Operation unsupported.',
-      message: `This ${operationName} operation is not supported by the selected Provider.`
+      message: `This ${operationName} operation is not supported by the catalog provider.`
     },
     'rate-limited': {
       title: 'Provider rate-limited.',
-      message: 'The selected Provider is rate-limited.'
+      message: 'The catalog provider is rate-limited.'
     },
     'application-rate-limited': {
       title: 'Application rate-limited.',
@@ -612,7 +780,7 @@ function PublicMediaError({ error, onRetry, resource = 'Media' }) {
     },
     unavailable: {
       title: 'Provider unavailable.',
-      message: `The selected Provider could not return ${operationName.toLowerCase()}.`
+      message: `The catalog provider could not return ${operationName.toLowerCase()}.`
     }
   }[kind];
 
@@ -628,143 +796,42 @@ function PublicMediaError({ error, onRetry, resource = 'Media' }) {
   );
 }
 
-function DiscoveryControls({ includeAdult, discovery }) {
-  const [type, setType] = useState('anime');
-  const [operation, setOperation] = useState('trending');
-  const [provider, setProvider] = useState('anilist');
-  const typeLabel = getMediaTypeLabel(type);
-  const typeNoun = getMediaTypeNoun(type);
-  const providers = getDiscoveryProviders(type);
-
-  const changeType = (nextType) => {
-    setType(nextType);
-    setProvider(getDiscoveryProviders(nextType)[0] ?? '');
-  };
-
-  return (
-    <div className="discovery-controls">
-      <div className="discovery-controls__heading">
-        <div>
-
-          <h3>Browse trending &amp; popular</h3>
-        </div>
-        <p>Browse supported Provider lists without changing your Search results.</p>
-      </div>
-      <div className="discovery-controls__fields">
-        <label>
-          Discovery media type
-          <select aria-label="Discovery media type" value={type} onChange={(event) => changeType(event.target.value)}>
-            <option value="anime">Anime catalog</option>
-            <option value="movie">Movies catalog</option>
-            <option value="tv">TV catalog</option>
-            <option value="game">Games catalog</option>
-          </select>
-        </label>
-        <label>
-          Discovery operation
-          <select aria-label="Discovery operation" value={operation} onChange={(event) => setOperation(event.target.value)}>
-            <option value="trending">Trending</option>
-            <option value="popular">Popular</option>
-          </select>
-        </label>
-        <label>
-          Discovery provider
-          <select aria-label="Discovery provider" value={provider} onChange={(event) => setProvider(event.target.value)}>
-            {providers.map((providerName) => <option key={providerName} value={providerName}>{getProviderLabel(providerName)}</option>)}
-          </select>
-        </label>
-        <button
-          type="button"
-          className="search-action search-action--secondary"
-          onClick={() => discovery.load({ operation, type, provider })}
-          disabled={discovery.isBusy}
-        >
-          {discovery.isBusy ? 'Loading Discovery…' : `Load ${operation} ${typeNoun}`}
-        </button>
-      </div>
-      <p className="discovery-controls__help">Adult content is {includeAdult ? 'included' : 'excluded'} using your visibility preference.</p>
-      <span className="visually-hidden">{typeLabel} Discovery uses the selected Provider without fallback.</span>
-    </div>
-  );
-}
-
-function DiscoveryResults({ discovery, user, library, onSave, onRequestSignIn, onViewDetails }) {
-  const { state } = discovery;
-  const typeLabel = getMediaTypeLabel(state.type);
-  const operationLabel = state.operation === 'popular' ? 'Popular' : 'Trending';
-  const resourceLabel = `${operationLabel} ${typeLabel}`;
-  const statusMessage = state.status === 'initial'
-    ? 'Choose a Provider-owned Discovery list.'
-    : state.status === 'loading'
-      ? `Loading ${resourceLabel.toLowerCase()}.`
-      : state.status === 'error'
-        ? `${resourceLabel} is unavailable.`
-        : state.results.length === 0
-          ? `No ${resourceLabel.toLowerCase()} available.`
-          : `${state.results.length} ${resourceLabel.toLowerCase()} loaded.`;
-
-  return (
-    <section className="discovery-results" role="region" aria-label={`${resourceLabel} discovery`} aria-busy={discovery.isBusy}>
-      <p className="search-announcement" aria-live="polite" aria-atomic="true">{statusMessage}</p>
-      {state.status === 'initial' && (
-        <SearchState>
-          <span className="state-mark" aria-hidden="true">/ / /</span>
-          <h3>Browse a Provider list.</h3>
-          <p>Choose trending or popular to load Provider-owned Discovery results.</p>
-        </SearchState>
-      )}
-      {state.status === 'loading' && state.results.length === 0 && <SearchSkeletons />}
-      {state.status === 'error' && <PublicMediaError error={state.error} onRetry={discovery.retry} resource="Discovery" />}
-      {(state.status === 'success' || state.results.length > 0) && (
-        <>
-          <p className="search-attribution discovery-attribution">
-            <span>UNOFFICIAL </span><ProviderAttributionLink provider={state.source} /><span> INTEGRATION</span>
-          </p>
-          {state.results.length === 0 ? (
-            <SearchState>
-              <span className="state-mark" aria-hidden="true">0</span>
-              <h3>No {resourceLabel} available.</h3>
-              <p>The selected Provider returned an empty Discovery list.</p>
-            </SearchState>
-          ) : (
-            <MediaGrid
-              results={state.results}
-              label={`${resourceLabel} Discovery`}
-              user={user}
-              library={library}
-              onSave={onSave}
-              onRequestSignIn={onRequestSignIn}
-              onViewDetails={onViewDetails}
-            />
-          )}
-          {state.pagination?.hasMore && (
-            <div className="load-more-wrap">
-              <button type="button" className="search-action search-action--primary" onClick={discovery.loadMore} disabled={discovery.isBusy || state.status === 'error'}>
-                {discovery.isBusy ? 'Loading more…' : `Load more ${resourceLabel.toLowerCase()}`}
-              </button>
-            </div>
-          )}
-        </>
-      )}
-    </section>
-  );
-}
-
-const DISCOVERY_SHELVES = Object.freeze([
-  { key: 'popular', label: 'Popular now', operation: 'popular' },
-  { key: 'trending', label: 'Trending this week', operation: 'trending' },
-  { key: 'latest', label: 'Latest releases', operation: 'latest' }
+const DISCOVERY_CATALOGS = Object.freeze([
+  { value: 'anime', label: 'Anime' },
+  { value: 'movie', label: 'Movies' },
+  { value: 'tv', label: 'TV' },
+  { value: 'game', label: 'Games' }
 ]);
+
+const DISCOVERY_SHELVES = Object.freeze({
+  default: Object.freeze([
+    { key: 'popular', label: 'Popular now', operation: 'popular' },
+    { key: 'trending', label: 'Trending this week', operation: 'trending' },
+    { key: 'latest', label: 'Latest releases', operation: 'latest' }
+  ]),
+  anime: Object.freeze([
+    { key: 'popular', label: 'Popular now', operation: 'popular' },
+    { key: 'trending', label: 'Currently airing', operation: 'trending' },
+    { key: 'latest', label: 'Seasonal releases', operation: 'latest' }
+  ])
+});
+
+function getDiscoveryShelves(type) {
+  return type === 'anime' ? DISCOVERY_SHELVES.anime : DISCOVERY_SHELVES.default;
+}
 
 function DiscoveryHero({ media, type, onViewDetails }) {
   const typeLabel = getMediaTypeLabel(type);
+  const shelfDescription = type === 'anime'
+    ? 'popular, currently airing, and seasonal releases'
+    : 'popular, trending, and latest releases';
   if (!media) {
     return (
       <section className="discovery-hero discovery-hero--empty" aria-label="Discover feature">
         <div className="discovery-hero__copy">
           <p className="section-index">YOUR NEXT FAVORITE</p>
           <h2>Find the story that stays with you.</h2>
-          <p>Choose a catalog above to surface Provider-owned picks across popular, trending, and latest releases.</p>
+          <p>Choose a catalog above to surface Provider-owned picks across {shelfDescription}.</p>
         </div>
         <div className="discovery-hero__art" aria-hidden="true"><img src="/mainIcon.svg" alt="" /></div>
       </section>
@@ -808,7 +875,20 @@ function DiscoveryShelf({ shelf, discovery, type, user, library, onSave, onReque
         : `${state.results.length} ${resourceLabel.toLowerCase()} loaded.`;
 
   const scrollRail = (direction) => {
-    railRef.current?.scrollBy({ left: direction * Math.max(280, railRef.current.clientWidth * 0.72), behavior: 'smooth' });
+    railRef.current?.scrollBy?.({ left: direction * Math.max(280, railRef.current.clientWidth * 0.72), behavior: 'smooth' });
+  };
+
+  const showNextPage = () => {
+    scrollRail(1);
+    if (state.pagination?.hasMore) discovery.loadMore();
+  };
+
+  const handleRailScroll = () => {
+    const rail = railRef.current;
+    if (!rail || discovery.isBusy || state.loadingPage || !state.pagination?.hasMore) return;
+    if (rail.scrollWidth <= rail.clientWidth) return;
+    const remaining = rail.scrollWidth - rail.clientWidth - rail.scrollLeft;
+    if (remaining <= Math.max(40, rail.clientWidth * 0.12)) discovery.loadMore();
   };
 
   return (
@@ -816,14 +896,13 @@ function DiscoveryShelf({ shelf, discovery, type, user, library, onSave, onReque
       <div className="discovery-shelf__heading">
         <div>
           <h3>{shelf.label}</h3>
-          <p>{state.source ? <><span>UNOFFICIAL </span><ProviderAttributionLink provider={state.source} /><span> INTEGRATION</span></> : 'Provider-owned catalog list'}</p>
         </div>
         <div className="discovery-shelf__actions">
           <span className="visually-hidden" aria-live="polite">{statusMessage}</span>
           <button type="button" className="shelf-arrow shelf-arrow--previous" onClick={() => scrollRail(-1)} aria-label={`Scroll ${resourceLabel} left`} title="Scroll left">
             <ArrowIcon />
           </button>
-          <button type="button" className="shelf-arrow" onClick={() => scrollRail(1)} aria-label={`Scroll ${resourceLabel} right`} title="Scroll right">
+          <button type="button" className="shelf-arrow" onClick={showNextPage} aria-label={`Scroll ${resourceLabel} right`} title="Scroll right">
             <ArrowIcon />
           </button>
         </div>
@@ -837,12 +916,12 @@ function DiscoveryShelf({ shelf, discovery, type, user, library, onSave, onReque
         <SearchState>
           <span className="state-mark" aria-hidden="true">0</span>
           <h3>No {resourceLabel} available.</h3>
-          <p>The selected Provider has no items for this shelf right now.</p>
+          <p>The catalog provider has no items for this shelf right now.</p>
         </SearchState>
       )}
       {state.results.length > 0 && (
         <>
-          <div className="discovery-rail" ref={railRef}>
+          <div className="discovery-rail" ref={railRef} onScroll={handleRailScroll}>
             <MediaGrid
               results={state.results}
               label={resourceLabel}
@@ -854,13 +933,6 @@ function DiscoveryShelf({ shelf, discovery, type, user, library, onSave, onReque
               onViewDetails={onViewDetails}
             />
           </div>
-          {state.pagination?.hasMore && (
-            <div className="discovery-shelf__load-more">
-              <button type="button" className="search-action search-action--secondary" onClick={discovery.loadMore} disabled={discovery.isBusy}>
-                {state.loadingPage ? 'Loading more…' : `Load more ${shelf.label.toLowerCase()}`}
-              </button>
-            </div>
-          )}
         </>
       )}
     </section>
@@ -869,28 +941,23 @@ function DiscoveryShelf({ shelf, discovery, type, user, library, onSave, onReque
 
 function DiscoverWorkspace({ active, includeAdult, user, library, onSave, onRequestSignIn, onViewDetails }) {
   const [type, setType] = useState('movie');
-  const [provider, setProvider] = useState('tmdb');
   const popular = useMediaDiscovery({ includeAdult });
   const trending = useMediaDiscovery({ includeAdult });
   const latest = useMediaDiscovery({ includeAdult });
-  const providers = getDiscoveryProviders(type);
   const featured = popular.state.results[0] ?? trending.state.results[0] ?? null;
+  const shelves = getDiscoveryShelves(type);
 
   useEffect(() => {
     if (!active) return undefined;
     const timer = window.setTimeout(() => {
-      popular.load({ operation: 'popular', type, provider });
-      trending.load({ operation: 'trending', type, provider });
-      latest.load({ operation: 'latest', type, provider });
+      popular.load({ operation: 'popular', type });
+      trending.load({ operation: 'trending', type });
+      latest.load({ operation: 'latest', type });
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [active, type, provider]);
+  }, [active, type]);
 
-  const changeType = (nextType) => {
-    const nextProviders = getDiscoveryProviders(nextType);
-    setType(nextType);
-    setProvider(nextProviders[0] ?? '');
-  };
+  const changeType = (nextType) => setType(nextType);
 
   return (
     <div className="discover-workspace">
@@ -900,31 +967,28 @@ function DiscoverWorkspace({ active, includeAdult, user, library, onSave, onRequ
             <p className="section-index">DISCOVER / CURATED SHELVES</p>
             <h3>What are you in the mood for?</h3>
           </div>
-          <p>One source, three ways in: popular now, trending this week, and genuine latest releases.</p>
         </div>
-        <div className="discovery-controls__fields">
-          <label>
-            Catalog
-            <select aria-label="Discovery media type" value={type} onChange={(event) => changeType(event.target.value)}>
-              <option value="anime">Anime catalog</option>
-              <option value="movie">Movies catalog</option>
-              <option value="tv">TV catalog</option>
-              <option value="game">Games catalog</option>
-            </select>
-          </label>
-          <label>
-            Source
-            <select aria-label="Discovery provider" value={provider} onChange={(event) => setProvider(event.target.value)}>
-              {providers.map((providerName) => <option key={providerName} value={providerName}>{getProviderLabel(providerName)}</option>)}
-            </select>
-          </label>
-          <p className="discovery-controls__help">Adult content is {includeAdult ? 'included' : 'excluded'} using your visibility preference. Each shelf keeps its own loading and retry state.</p>
+        <div className="discovery-catalog-picker" role="group" aria-label="Discovery catalogs">
+          {DISCOVERY_CATALOGS.map((catalog) => (
+            <button
+              key={catalog.value}
+              type="button"
+              className={`discovery-catalog-picker__button${type === catalog.value ? ' discovery-catalog-picker__button--active' : ''}`}
+              aria-pressed={type === catalog.value}
+              aria-label={catalog.label}
+              title={catalog.label}
+              onClick={() => changeType(catalog.value)}
+            >
+              <CatalogIcon type={catalog.value} />
+              <span className="discovery-catalog-picker__label">{catalog.label}</span>
+            </button>
+          ))}
         </div>
       </div>
 
       <DiscoveryHero media={featured} type={type} onViewDetails={onViewDetails} />
       <div className="discovery-shelves">
-        {DISCOVERY_SHELVES.map((shelf, index) => (
+        {shelves.map((shelf, index) => (
           <DiscoveryShelf
             key={shelf.key}
             shelf={shelf}
@@ -942,41 +1006,23 @@ function DiscoverWorkspace({ active, includeAdult, user, library, onSave, onRequ
   );
 }
 
-function RecommendationResults({ recommendations, anchor, user, library, onSave, onRequestSignIn, onViewDetails }) {
+function RecommendationResults({ recommendations, user, library, onSave, onRequestSignIn, onViewDetails }) {
   const { state } = recommendations;
-  const statusMessage = state.status === 'idle'
-    ? 'Recommendations are ready to load.'
-    : state.status === 'loading'
-      ? 'Loading Provider-owned Recommendations.'
-      : state.status === 'error'
-        ? 'Recommendations are unavailable.'
-        : state.results.length === 0
-          ? 'No Provider-owned Recommendations found.'
-          : `${state.results.length} Provider-owned Recommendations loaded.`;
 
   return (
-    <section className="recommendations-panel" role="region" aria-label="Provider-owned recommendations" aria-busy={recommendations.isBusy}>
+    <section className="recommendations-panel" role="region" aria-label="Recommendations" aria-busy={recommendations.isBusy}>
       <div className="recommendations-panel__heading">
         <div>
           <h3>Recommendations</h3>
         </div>
-        {state.source && (
-          <p className="search-attribution"><span>UNOFFICIAL </span><ProviderAttributionLink provider={state.source} /><span> INTEGRATION</span></p>
-        )}
       </div>
-      <p className="search-announcement" aria-live="polite" aria-atomic="true">{statusMessage}</p>
-      {state.status === 'idle' && (
-        <button type="button" className="search-action search-action--secondary" onClick={() => recommendations.load(anchor)}>
-          Load recommendations
-        </button>
-      )}
       {state.status === 'loading' && state.results.length === 0 && <SearchSkeletons />}
       {state.status === 'error' && <PublicMediaError error={state.error} onRetry={recommendations.retry} resource="Recommendations" />}
       {state.status === 'success' && state.results.length === 0 && (
         <SearchState>
           <span className="state-mark" aria-hidden="true">0</span>
           <h3>No recommendations found.</h3>
-          <p>The selected Provider returned an empty related-media list.</p>
+          <p>The provider returned no related titles.</p>
         </SearchState>
       )}
       {state.results.length > 0 && (
@@ -1003,17 +1049,98 @@ function RecommendationResults({ recommendations, anchor, user, library, onSave,
   );
 }
 
+function EpisodeTrackingSection({ media, user, library, libraryItem: providedLibraryItem = null, onRequestSignIn }) {
+  const titleId = useId();
+  const seasonId = useId();
+  const libraryItem = providedLibraryItem ?? library.findSavedItem?.(media);
+  const episodes = useMediaEpisodes({
+    media,
+    libraryItemId: libraryItem?.id,
+    enabled: Boolean(user && libraryItem),
+    onAuthenticationRequired: () => onRequestSignIn(media)
+  });
+
+  if (!episodes.supported) return null;
+
+  return (
+    <section className="episode-tracking" aria-labelledby={titleId} aria-busy={episodes.isBusy}>
+      <div className="episode-tracking__heading">
+        <div>
+          <h3 id={titleId}>Episodes</h3>
+          <p>Track which released episodes you have watched.</p>
+        </div>
+        {episodes.episodeStatus === 'success' && (
+          <p className="episode-tracking__summary" aria-live="polite">
+            {episodes.watchedCount} of {episodes.episodes.length} watched
+          </p>
+        )}
+      </div>
+
+      {!user ? (
+        <button type="button" className="text-action" onClick={() => onRequestSignIn(media)}>Sign in to track episodes</button>
+      ) : !libraryItem ? (
+        <p className="editor-empty">Bookmark this title to start tracking episodes.</p>
+      ) : episodes.episodeStatus === 'loading' ? (
+        <p className="editor-empty" aria-live="polite">Loading episodes…</p>
+      ) : episodes.episodeStatus === 'error' ? (
+        <p className="form-error" role="alert">
+          {formatApiError(episodes.error, 'Episode data is unavailable. Use Progress in My Library for aggregate tracking.')}
+        </p>
+      ) : (
+        <>
+          <div className="episode-tracking__toolbar">
+            <label htmlFor={seasonId}>Season
+              <select id={seasonId} value={episodes.season} onChange={(event) => episodes.setSeason(Number(event.target.value))} disabled={episodes.isBusy}>
+                {episodes.seasonOptions.map((seasonNumber) => <option value={seasonNumber} key={seasonNumber}>Season {seasonNumber}</option>)}
+              </select>
+            </label>
+            <div className="episode-tracking__bulk-actions">
+              <button type="button" className="text-action" onClick={() => episodes.markAll(true)} disabled={episodes.isBusy || episodes.episodes.length === 0}>Mark all watched</button>
+              <button type="button" className="text-action text-action--quiet" onClick={() => episodes.markAll(false)} disabled={episodes.isBusy || episodes.episodes.length === 0}>Clear watched</button>
+            </div>
+          </div>
+          {episodes.watchedStatus === 'error' && (
+            <p className="form-error" role="alert">{formatApiError(episodes.error, 'Watched episode state is unavailable.')}</p>
+          )}
+          {episodes.episodes.length === 0 ? (
+            <p className="editor-empty">No released episodes are available for this season.</p>
+          ) : (
+            <ul className="episode-list">
+              {episodes.episodes.map((episode) => {
+                const checked = episodes.watched.has(`${episodes.season}:${episode.number}`);
+                const episodeTitle = episode.title || `Episode ${episode.number}`;
+                const hasDistinctTitle = episodeTitle !== `Episode ${episode.number}`;
+                return (
+                  <li className="episode-row" key={`${episodes.season}:${episode.number}`}>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(event) => episodes.toggleEpisode(episode.number, event.target.checked)}
+                        disabled={episodes.isBusy}
+                      />
+                      <span className="episode-row__copy">
+                        <strong>{hasDistinctTitle ? `Episode ${episode.number}: ${episodeTitle}` : `Episode ${episode.number}`}</strong>
+                        {episode.airDate && <span>{formatCardReleaseDate(episode.airDate)}</span>}
+                      </span>
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 function MediaDetailsPanel({ details, recommendations, user, library, onSave, onRequestSignIn, onBack, onViewDetails }) {
   const panelRef = useRef(null);
   const titleId = useId();
   const selectedMedia = details.selectedMedia;
   const media = details.media;
   const title = media?.title ?? selectedMedia?.title ?? 'Selected Media';
-  const statusMessage = details.status === 'loading'
-    ? `Loading details for ${title}.`
-    : details.status === 'error'
-      ? 'Media details are unavailable.'
-      : `${title} details loaded.`;
 
   useEffect(() => {
     panelRef.current?.focus();
@@ -1025,14 +1152,10 @@ function MediaDetailsPanel({ details, recommendations, user, library, onSave, on
         <div>
           <h2 id={titleId}>{title} details</h2>
         </div>
-        {selectedMedia?.provider && (
-          <p className="search-attribution"><span>UNOFFICIAL </span><ProviderAttributionLink provider={selectedMedia.provider} /><span> INTEGRATION</span></p>
-        )}
       </div>
       <div className="details-panel__actions">
         <button type="button" className="search-action search-action--secondary" onClick={onBack}>Back to results</button>
       </div>
-      <p className="search-announcement" aria-live="polite" aria-atomic="true">{statusMessage}</p>
       {details.status === 'loading' && <SearchSkeletons />}
       {details.status === 'error' && <PublicMediaError error={details.error} onRetry={details.retry} resource="details" />}
       {details.status === 'success' && media && (
@@ -1046,12 +1169,12 @@ function MediaDetailsPanel({ details, recommendations, user, library, onSave, on
               onRequestSignIn={onRequestSignIn}
             />
             <div className="details-copy">
-              <h3>Media metadata</h3>
+              <h3>About this title</h3>
               <p>{media.description ?? 'Description unavailable.'}</p>
               <dl className="details-facts">
                 <div><dt>Provider</dt><dd>{getProviderLabel(media.provider)}</dd></div>
                 <div><dt>Genres</dt><dd>{formatMetadataList(media.genres, 'Genres')}</dd></div>
-                <div><dt>Creators</dt><dd>{media.creators?.length ? media.creators.map((creator) => creator.name).join(', ') : 'Creators unavailable'}</dd></div>
+                <div><dt>Key creators</dt><dd>{formatPrimaryCreators(media.creators)}</dd></div>
               </dl>
               <dl className="details-facts">
                 {getCardFacts(media).map(([label, value]) => (
@@ -1060,9 +1183,14 @@ function MediaDetailsPanel({ details, recommendations, user, library, onSave, on
               </dl>
             </div>
           </div>
+          <EpisodeTrackingSection
+            media={media}
+            user={user}
+            library={library}
+            onRequestSignIn={onRequestSignIn}
+          />
           <RecommendationResults
             recommendations={recommendations}
-            anchor={media}
             user={user}
             library={library}
             onSave={onSave}
@@ -1072,6 +1200,221 @@ function MediaDetailsPanel({ details, recommendations, user, library, onSave, on
         </>
       )}
     </section>
+  );
+}
+
+function GenreFilter({ search, options, optionsLoading, optionsUnavailable }) {
+  const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const selectedGenres = options.genres.filter((genre) => search.filters.genres.includes(genre.id));
+  const selectedCount = search.filters.genres.length;
+  const selectionLabel = selectedCount === 0
+    ? 'Any genres'
+    : selectedCount === 1 && selectedGenres.length === 1
+      ? selectedGenres[0].label
+      : `${selectedCount} genres selected`;
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleGenres = options.genres.filter((genre) => genre.label.toLowerCase().includes(normalizedQuery));
+
+  useEffect(() => {
+    setQuery('');
+  }, [search.type]);
+
+  const toggleGenre = (genreId) => {
+    const genres = search.filters.genres.includes(genreId)
+      ? search.filters.genres.filter((selectedId) => selectedId !== genreId)
+      : [...search.filters.genres, genreId];
+    search.updateFilters({ genres });
+  };
+
+  return (
+    <div className="search-filter-field search-filter-field--genres">
+      <span className="search-filter-field__label" id="media-filter-genres-label">Genres</span>
+      <details className="genre-filter">
+        <summary aria-label={`Genres: ${selectionLabel}`} onClick={() => setOpen((current) => !current)}>
+          <span>{selectionLabel}</span>
+          <svg className="genre-filter__chevron" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <path d="m3.5 6 4.5 4 4.5-4" />
+          </svg>
+        </summary>
+        <div className="genre-filter__panel" hidden={!open}>
+          <div className="genre-filter__search">
+            <label className="visually-hidden" htmlFor="media-filter-genres-search">Search genres</label>
+            <input
+              id="media-filter-genres-search"
+              type="search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search genres"
+              autoComplete="off"
+              disabled={optionsUnavailable}
+            />
+                <button
+                  type="button"
+                  className="text-action genre-filter__reset"
+                  onClick={() => {
+                    setQuery('');
+                    search.updateFilters({ genres: [] });
+                  }}
+                  disabled={selectedCount === 0 && query.trim() === ''}
+                >
+              Reset
+            </button>
+          </div>
+          {optionsLoading ? (
+            <p className="genre-filter__status" aria-live="polite">Loading genres…</p>
+          ) : optionsUnavailable ? (
+            <p className="genre-filter__status" role="status">Genre options are unavailable right now.</p>
+          ) : visibleGenres.length === 0 ? (
+            <p className="genre-filter__status">No genres match “{query}”.</p>
+          ) : (
+            <div className="genre-filter__options" role="group" aria-label="Genre options">
+              {visibleGenres.map((genre) => {
+                const selected = search.filters.genres.includes(genre.id);
+                return (
+                  <button
+                    type="button"
+                    className={`genre-filter__option${selected ? ' is-selected' : ''}`}
+                    aria-pressed={selected}
+                    key={genre.id}
+                    onClick={() => toggleGenre(genre.id)}
+                  >
+                    {genre.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </details>
+      <span className="search-filter-field__hint">Choose one or more; matches any selected genre.</span>
+    </div>
+  );
+}
+
+function SearchFilters({ search }) {
+  const [open, setOpen] = useState(false);
+  const [creatorQuery, setCreatorQuery] = useState('');
+  const options = useMediaFilterOptions({
+    type: search.type,
+    includeAdult: search.includeAdult,
+    creatorQuery,
+    enabled: open && search.type !== 'all'
+  });
+  const isCombined = search.type === 'all';
+  const selectedCreatorId = search.filters.creator && typeof search.filters.creator === 'object'
+    ? search.filters.creator.id
+    : search.filters.creator ?? '';
+  const availableCreators = [
+    ...(selectedCreatorId && search.filters.creator?.label ? [{ id: selectedCreatorId, label: search.filters.creator.label }] : []),
+    ...options.creators.filter((creator) => creator.id !== selectedCreatorId)
+  ];
+  const filterCount = [
+    search.filters.genres.length > 0,
+    Boolean(selectedCreatorId),
+    search.filters.minRating !== '',
+    search.filters.minMetacritic !== ''
+  ].filter(Boolean).length;
+
+  useEffect(() => {
+    setCreatorQuery('');
+  }, [search.type]);
+
+  if (isCombined) {
+    return (
+      <details className="search-filters search-filters--disabled" onToggle={(event) => setOpen(event.currentTarget.open)}>
+        <summary>More filters</summary>
+        <div className="search-filters__body">
+          <label className="adult-toggle">
+            <input
+              type="checkbox"
+              checked={search.includeAdult}
+              onChange={(event) => search.toggleIncludeAdult(event.target.checked)}
+            />
+            <span>Include adult content</span>
+          </label>
+          <p className="search-filters__disabled-copy">Choose a catalog to use advanced filters.</p>
+        </div>
+      </details>
+    );
+  }
+
+  const optionsUnavailable = options.status === 'error';
+  const optionsLoading = options.status === 'loading';
+  const ratingField = search.type === 'game' ? 'minMetacritic' : 'minRating';
+  const ratingLabel = search.type === 'game' ? 'Minimum Metacritic' : 'Minimum Provider Rating';
+  const ratingValues = search.type === 'game'
+    ? [50, 60, 70, 80, 90]
+    : [2, 4, 6, 7, 8, 9, 10];
+
+  return (
+    <details className="search-filters" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary>
+        <span>More filters</span>
+        {filterCount > 0 && <span className="search-filters__count">{filterCount} selected</span>}
+      </summary>
+      <div className="search-filters__body">
+        <label className="adult-toggle">
+          <input
+            type="checkbox"
+            checked={search.includeAdult}
+            onChange={(event) => search.toggleIncludeAdult(event.target.checked)}
+          />
+          <span>Include adult content</span>
+        </label>
+        {optionsUnavailable && (
+          <div className="search-filters__notice" role="status">
+            <span>Filter options are unavailable right now.</span>
+            <button type="button" className="text-action" onClick={options.retry}>Retry options</button>
+          </div>
+        )}
+        <div className="search-filters__fields">
+          <GenreFilter
+            search={search}
+            options={options}
+            optionsLoading={optionsLoading}
+            optionsUnavailable={optionsUnavailable}
+          />
+
+          <div className="search-filter-field">
+            <label htmlFor="media-filter-creator-query">Creator</label>
+            <input
+              id="media-filter-creator-query"
+              type="text"
+              value={creatorQuery}
+              onChange={(event) => setCreatorQuery(event.target.value)}
+              placeholder={optionsLoading ? 'Loading creators…' : 'Find a creator'}
+              autoComplete="off"
+              disabled={optionsUnavailable}
+            />
+            <select
+              id="media-filter-creator"
+              value={selectedCreatorId}
+              onChange={(event) => search.updateFilters({ creator: availableCreators.find((creator) => creator.id === event.target.value) ?? null })}
+              disabled={optionsUnavailable || optionsLoading}
+            >
+              <option value="">Any creator</option>
+              {availableCreators.map((creator) => <option key={creator.id} value={creator.id}>{creator.label}</option>)}
+            </select>
+            <span className="search-filter-field__hint">Provider-backed suggestions; choose one.</span>
+          </div>
+
+          <label className="search-filter-field" htmlFor={`media-filter-${ratingField}`}>
+            {ratingLabel}
+            <select
+              id={`media-filter-${ratingField}`}
+              value={search.filters[ratingField]}
+              onChange={(event) => search.updateFilters({ [ratingField]: event.target.value, ...(ratingField === 'minRating' ? { minMetacritic: '' } : { minRating: '' }) })}
+            >
+              <option value="">Any rating</option>
+              {ratingValues.map((value) => <option key={value} value={value}>{value}+</option>)}
+            </select>
+            <span className="search-filter-field__hint">Normalized to a 0–10 scale where supported.</span>
+          </label>
+        </div>
+        <button type="button" className="text-action text-action--quiet" onClick={search.clearFilters} disabled={filterCount === 0}>Clear filters</button>
+      </div>
+    </details>
   );
 }
 
@@ -1086,9 +1429,9 @@ function MediaSearch({ user, library, onSave, onRequestSignIn, mode = 'search', 
 
   const openDetails = useCallback((media) => {
     if (details.status === 'idle') originRef.current = mediaIdentity(media);
-    recommendations.clear();
+    recommendations.load(media);
     details.open(media);
-  }, [details.open, details.status, recommendations.clear]);
+  }, [details.open, details.status, recommendations.load]);
 
   const backToResults = useCallback(() => {
     restoreFocusRef.current = true;
@@ -1105,16 +1448,8 @@ function MediaSearch({ user, library, onSave, onRequestSignIn, mode = 'search', 
   }, [details.status]);
 
   return (
-    <section ref={workspaceRef} tabIndex={-1} className={`search-section ${mode}-workspace`} aria-label={mode === 'search' ? 'Search workspace' : 'Discover workspace'}>
+    <section id={mode === 'discover' ? 'discover' : undefined} ref={workspaceRef} tabIndex={-1} className={`search-section ${mode}-workspace`} aria-label={mode === 'search' ? 'Search workspace' : 'Discover workspace'}>
       {mode === 'search' && <>
-
-      <div className="section-heading">
-        <div>
-          <h2 id="media-search-title">Search</h2>
-
-        </div>
-        <p className="search-attribution"><ProviderAttribution search={search} /></p>
-      </div>
 
       <form className="search-form" onSubmit={(event) => { event.preventDefault(); search.submitSearch(); }}>
         <div className="search-type-field">
@@ -1149,21 +1484,13 @@ function MediaSearch({ user, library, onSave, onRequestSignIn, mode = 'search', 
                     ? 'Try Zelda'
                     : 'Try a title across media'}
             autoComplete="off"
-            aria-describedby="media-query-help"
             aria-controls="media-results"
           />
           <button className="search-action search-action--primary search-submit" type="submit">Search</button>
         </div>
-        <p className="search-form__help" id="media-query-help">Search starts after a short pause. Press Enter to search now.</p>
         <p className="visually-hidden" id="media-type-help">Changing the media type clears the current results and searches the selected catalog.</p>
-        <label className="adult-toggle">
-          <input
-            type="checkbox"
-            checked={search.includeAdult}
-            onChange={(event) => search.toggleIncludeAdult(event.target.checked)}
-          />
-          <span>Include adult content</span>
-        </label>
+        <SearchFilters search={search} />
+        {search.formError && <p className="form-error search-form__error" role="alert">{search.formError}</p>}
       </form>
       </>}
 
@@ -1204,7 +1531,121 @@ function MediaSearch({ user, library, onSave, onRequestSignIn, mode = 'search', 
   );
 }
 
-function AuthPanel({ auth, mode, onModeChange, signInPrompt }) {
+function AccountProfileEditor({ auth }) {
+  const inputRef = useRef(null);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const [localError, setLocalError] = useState('');
+
+  useEffect(() => () => {
+    if (previewUrl && typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
+      URL.revokeObjectURL(previewUrl);
+    }
+  }, [previewUrl]);
+
+  const clearSelection = () => {
+    setSelectedFile(null);
+    setPreviewUrl(null);
+    setLocalError('');
+    if (inputRef.current) inputRef.current.value = '';
+  };
+
+  const handleFileChange = (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    if (!PROFILE_AVATAR_TYPES.has(file.type)) {
+      setLocalError('Choose a JPG, PNG, or WebP image.');
+      return;
+    }
+    if (file.size > PROFILE_AVATAR_MAX_BYTES) {
+      setLocalError('Profile pictures must be 2 MB or smaller.');
+      return;
+    }
+
+    setLocalError('');
+    setSelectedFile(file);
+    if (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+      setPreviewUrl(URL.createObjectURL(file));
+    } else {
+      setPreviewUrl(null);
+    }
+  };
+
+  const saveSelection = async () => {
+    if (!selectedFile) return;
+    setLocalError('');
+    const saved = await auth.updateAvatar(selectedFile);
+    if (saved) clearSelection();
+  };
+
+  const restoreLogo = async () => {
+    setLocalError('');
+    await auth.removeAvatar();
+  };
+
+  const isSaving = auth.status === 'updating-avatar';
+  const isRemoving = auth.status === 'removing-avatar';
+  const isBusy = auth.isBusy;
+
+  return (
+    <section className="account-profile" aria-labelledby="username-title">
+      <div className="account-profile__overview">
+        <div className="account-profile__avatar">
+          <UserAvatar user={auth.user} previewUrl={previewUrl} className="user-avatar--large" />
+          <button
+            type="button"
+            className="account-profile__avatar-edit"
+            onClick={() => inputRef.current?.click()}
+            disabled={isBusy}
+            aria-label="Edit profile picture"
+            title="Edit profile picture"
+          >
+            <EditIcon />
+          </button>
+        </div>
+        <div className="account-profile__copy">
+          <h3 id="username-title">{auth.user.username}</h3>
+          <p>{selectedFile ? `Previewing ${selectedFile.name}` : auth.user.avatarUpdatedAt ? 'Your uploaded picture is shown across Goraku Base.' : 'The Goraku Base logo is your default picture.'}</p>
+          <span className="account-profile__help">JPG, PNG, or WebP · 2 MB maximum</span>
+        </div>
+      </div>
+      <input
+        ref={inputRef}
+        className="visually-hidden"
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        onChange={handleFileChange}
+        aria-label="Choose profile picture"
+      />
+      {selectedFile ? (
+        <div className="account-profile__actions">
+          <button type="button" className="search-action search-action--primary" onClick={saveSelection} disabled={isBusy}>
+            {isSaving ? 'Saving photo…' : 'Save photo'}
+          </button>
+          <button type="button" className="search-action search-action--secondary" onClick={clearSelection} disabled={isBusy}>Cancel</button>
+        </div>
+      ) : auth.user.avatarUpdatedAt ? (
+        <div className="account-profile__actions">
+          <button type="button" className="search-action search-action--secondary" onClick={restoreLogo} disabled={isBusy}>
+            {isRemoving ? 'Restoring logo…' : 'Use Goraku logo'}
+          </button>
+        </div>
+      ) : null}
+      {localError && <p className="form-error account-profile__error" role="alert">{localError}</p>}
+      {isSaving && <p className="account-profile__status" aria-live="polite">Saving your profile picture…</p>}
+      {isRemoving && <p className="account-profile__status" aria-live="polite">Restoring the Goraku logo…</p>}
+    </section>
+  );
+}
+
+function AuthPanel({ auth, mode, onModeChange, signInPrompt, resetToken, onClearResetToken }) {
+  const [lastEmail, setLastEmail] = useState('');
+  const [showPasswordReset, setShowPasswordReset] = useState(false);
+  const [passwordResetSent, setPasswordResetSent] = useState(false);
+  const [passwordResetComplete, setPasswordResetComplete] = useState(false);
+
   if (auth.status === 'loading') {
     return (
       <section className="account-section" id="account" aria-labelledby="account-title" aria-busy="true">
@@ -1217,64 +1658,181 @@ function AuthPanel({ auth, mode, onModeChange, signInPrompt }) {
   if (auth.user) {
     return (
       <section className="account-section" id="account" aria-labelledby="account-title">
-        <div className="account-bar">
-          <div>
-
-            <h2 id="account-title">Your signal is saved.</h2>
-            <p className="account-email">Signed in as <strong>{auth.user.email}</strong></p>
-          </div>
+        <h2 id="account-title" className="visually-hidden">Account</h2>
+        {auth.error && <p className="form-error" role="alert">{formatApiError(auth.error, 'We could not complete that account action.')}</p>}
+        <AccountProfileEditor auth={auth} />
+        <div className="account-logout">
           <button type="button" className="search-action search-action--secondary" onClick={auth.logout} disabled={auth.isBusy}>
             {auth.status === 'logging-out' ? 'Signing out…' : 'Log out'}
           </button>
         </div>
-        {auth.error && <p className="form-error" role="alert">{formatApiError(auth.error, 'We could not complete that account action.')}</p>}
       </section>
     );
   }
 
   const isLogin = mode === 'login';
-  const title = isLogin ? 'Sign in to your signal.' : 'Create your local signal.';
+
+  if (resetToken) {
+    return (
+      <section className="account-section" id="account" aria-labelledby="account-title">
+        <h2 id="account-title" className="visually-hidden">Account</h2>
+        <form
+          className="auth-form"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            const password = new FormData(event.currentTarget).get('password');
+            const reset = await auth.resetPassword(resetToken, password);
+            if (reset) {
+              setPasswordResetComplete(true);
+              event.currentTarget.reset();
+            }
+          }}
+        >
+          <div className="auth-brand" aria-label="Goraku Base">
+            <span className="auth-brand__mark"><img src="/mainIcon.svg" alt="" /></span>
+            <span className="auth-brand__copy"><strong>GORAKU</strong><small>BASE</small></span>
+          </div>
+          <h3>Choose a new password</h3>
+          {passwordResetComplete ? (
+            <p className="auth-prompt" role="status">Your password was reset. You can now sign in.</p>
+          ) : (
+            <>
+              <label className="search-form__label" htmlFor="auth-new-password">New password</label>
+              <input id="auth-new-password" name="password" type="password" required autoComplete="new-password" />
+              <p className="auth-form__help">Use 12–128 characters and at least one ASCII special character.</p>
+              {auth.error && <p className="form-error" role="alert">{formatApiError(auth.error, 'Password reset could not be completed.')}</p>}
+              <button type="submit" className="search-action search-action--primary" disabled={auth.isBusy}>
+                {auth.isBusy ? 'Resetting…' : 'Reset password'}
+              </button>
+            </>
+          )}
+          <p className="auth-mode-prompt">
+            <button type="button" className="auth-mode-link" onClick={() => { onClearResetToken(); onModeChange('login'); }}>Back to sign in</button>
+          </p>
+        </form>
+      </section>
+    );
+  }
+
+  if (showPasswordReset) {
+    return (
+      <section className="account-section" id="account" aria-labelledby="account-title">
+        <h2 id="account-title" className="visually-hidden">Account</h2>
+        <form
+          className="auth-form"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            const email = new FormData(event.currentTarget).get('email');
+            const sent = await auth.requestPasswordReset(email);
+            if (sent) {
+              setPasswordResetSent(true);
+              event.currentTarget.reset();
+            }
+          }}
+        >
+          <div className="auth-brand" aria-label="Goraku Base">
+            <span className="auth-brand__mark"><img src="/mainIcon.svg" alt="" /></span>
+            <span className="auth-brand__copy"><strong>GORAKU</strong><small>BASE</small></span>
+          </div>
+          <h3>Reset your password</h3>
+          {passwordResetSent ? (
+            <p className="auth-prompt" role="status">If a verified account exists for that email, a reset link is on its way.</p>
+          ) : (
+            <>
+              <label className="search-form__label" htmlFor="auth-reset-email">Email</label>
+              <input id="auth-reset-email" name="email" type="email" required autoComplete="email" />
+              {auth.error && <p className="form-error" role="alert">{formatApiError(auth.error, 'Password reset could not be requested.')}</p>}
+              <button type="submit" className="search-action search-action--primary" disabled={auth.isBusy}>
+                {auth.isBusy ? 'Sending…' : 'Send reset link'}
+              </button>
+            </>
+          )}
+          <p className="auth-mode-prompt">
+            <button type="button" className="auth-mode-link" onClick={() => { setShowPasswordReset(false); setPasswordResetSent(false); setPasswordResetComplete(false); }}>
+              Back to sign in
+            </button>
+          </p>
+        </form>
+      </section>
+    );
+  }
 
   return (
     <section className="account-section" id="account" aria-labelledby="account-title">
-      <div className="account-heading">
-        <div>
-
-          <h2 id="account-title">{title}</h2>
-        </div>
-        <p className="account-note">Search remains public. A local session unlocks personal library actions.</p>
-      </div>
+      <h2 id="account-title" className="visually-hidden">Account</h2>
       {signInPrompt && <p className="auth-prompt" aria-live="polite">{signInPrompt}</p>}
       {auth.status === 'error' && auth.error && (
         <p className="form-error" role="alert">{formatApiError(auth.error, 'Authentication is currently unavailable.')}</p>
       )}
-      <div className="auth-switcher" aria-label="Authentication options">
-        <button type="button" className={isLogin ? 'auth-switcher__active' : ''} onClick={() => onModeChange('login')}>Sign in</button>
-        <button type="button" className={!isLogin ? 'auth-switcher__active' : ''} onClick={() => onModeChange('register')}>Register</button>
-      </div>
+      {auth.status === 'verification-required' && (
+        <div className="auth-prompt" role="status">
+          <p>Check your email to verify your account before signing in. In local development, the verification link is printed in the API server console.</p>
+          <button type="button" className="auth-mode-link" onClick={() => auth.resendVerification(auth.verificationEmail)} disabled={auth.isBusy}>
+            {auth.isBusy ? 'Resending…' : 'Resend verification email'}
+          </button>
+        </div>
+      )}
+      {auth.error?.code === 'EMAIL_NOT_VERIFIED' && lastEmail.includes('@') && (
+        <div className="auth-prompt" role="status">
+          <p>Verify your email address before signing in.</p>
+          <button type="button" className="auth-mode-link" onClick={() => auth.resendVerification(lastEmail)} disabled={auth.isBusy}>
+            {auth.isBusy ? 'Resending…' : 'Resend verification email'}
+          </button>
+        </div>
+      )}
       <form
         className="auth-form"
         onSubmit={async (event) => {
           event.preventDefault();
           const formElement = event.currentTarget;
           const form = new FormData(formElement);
+          const identifier = form.get('identifier');
+          if (isLogin && typeof identifier === 'string' && identifier.includes('@')) setLastEmail(identifier);
           const authenticated = isLogin
-            ? await auth.login({ email: form.get('email'), password: form.get('password') })
-            : await auth.register({ email: form.get('email'), password: form.get('password') });
+            ? await auth.login({ identifier, password: form.get('password') })
+            : await auth.register({ username: form.get('username'), email: form.get('email'), password: form.get('password') });
           if (authenticated) formElement.reset();
         }}
       >
-        <label className="search-form__label" htmlFor="auth-email">Email</label>
-        <input id="auth-email" name="email" type="email" required autoComplete="email" />
+        <div className="auth-brand" aria-label="Goraku Base">
+          <span className="auth-brand__mark"><img src="/mainIcon.svg" alt="" /></span>
+          <span className="auth-brand__copy"><strong>GORAKU</strong><small>BASE</small></span>
+        </div>
+        {!isLogin && (
+          <>
+            <label className="search-form__label" htmlFor="auth-username">Username</label>
+            <input id="auth-username" name="username" type="text" required minLength={3} maxLength={32} pattern="[A-Za-z0-9_]+" autoComplete="username" />
+            <p className="auth-form__help">Use 3–32 letters, numbers, or underscores.</p>
+          </>
+        )}
+        <label className="search-form__label" htmlFor={isLogin ? 'auth-identifier' : 'auth-email'}>{isLogin ? 'Email or username' : 'Email'}</label>
+        <input
+          id={isLogin ? 'auth-identifier' : 'auth-email'}
+          name={isLogin ? 'identifier' : 'email'}
+          type={isLogin ? 'text' : 'email'}
+          required
+          autoComplete={isLogin ? 'username' : 'email'}
+        />
         <label className="search-form__label" htmlFor="auth-password">Password</label>
         <input id="auth-password" name="password" type="password" required autoComplete={isLogin ? 'current-password' : 'new-password'} />
         {!isLogin && <p className="auth-form__help">Use 12–128 characters and at least one ASCII special character.</p>}
         {auth.error && auth.status !== 'error' && (
           <p className="form-error" role="alert">{formatApiError(auth.error, isLogin ? 'Sign in could not be completed.' : 'Registration could not be completed.')}</p>
         )}
+        {isLogin && (
+          <button type="button" className="auth-mode-link auth-form__reset" onClick={() => { setShowPasswordReset(true); setPasswordResetSent(false); }}>
+            Forgot password?
+          </button>
+        )}
         <button type="submit" className="search-action search-action--primary" disabled={auth.isBusy}>
           {auth.isBusy ? (isLogin ? 'Signing in…' : 'Registering…') : isLogin ? 'Sign in' : 'Register'}
         </button>
+        <p className="auth-mode-prompt">
+          {isLogin ? "Don't have an account?" : 'Already have an account?'}{' '}
+          <button type="button" className="auth-mode-link" onClick={() => onModeChange(isLogin ? 'register' : 'login')}>
+            {isLogin ? 'Sign up' : 'Sign in'}
+          </button>
+        </p>
       </form>
     </section>
   );
@@ -1296,14 +1854,14 @@ function StarIcon() {
   );
 }
 
-function PersonalRating({ item, library, label }) {
+function PersonalRating({ item, library }) {
   const rating = item.personalRating;
   const busy = library.isActionBusy(item.id, 'personalRating');
   const valueLabel = rating === null ? 'Unrated on a 0–10 scale.' : `${rating} out of 10.`;
 
   return (
     <fieldset className="tracking-editor rating-editor" disabled={busy}>
-      <legend>Personal rating for {label}</legend>
+      <legend>Personal Rating</legend>
       <div className="rating-row">
         <button
           type="button"
@@ -1311,7 +1869,7 @@ function PersonalRating({ item, library, label }) {
           aria-pressed={rating === 0}
           onClick={() => library.update(item.id, { personalRating: 0 }, { actionKey: 'personalRating' })}
         >
-          Rate 0 out of 10
+          Reset
         </button>
         <div className="rating-stars" role="group" aria-label={`Personal rating, ${valueLabel}`}>
           {Array.from({ length: 5 }, (_, index) => {
@@ -1341,7 +1899,6 @@ function PersonalRating({ item, library, label }) {
             );
           })}
         </div>
-        <span className="rating-value" aria-live="polite">{valueLabel}</span>
       </div>
       <button
         type="button"
@@ -1376,7 +1933,7 @@ function NoteEditor({ item, library, label }) {
         saveNote(note);
       }}
     >
-      <label htmlFor={`library-note-${item.id}`}>Note for {label}</label>
+      <label htmlFor={`library-note-${item.id}`}>Note</label>
       <textarea
         id={`library-note-${item.id}`}
         value={note}
@@ -1386,11 +1943,10 @@ function NoteEditor({ item, library, label }) {
         aria-describedby={`library-note-help-${item.id}`}
         disabled={busy}
         rows={4}
-        placeholder="Keep a plain-text thought about this Library Item."
+        placeholder="Write a note..."
       />
       <div className="editor-meta" id={`library-note-help-${item.id}`}>
-        <span aria-live="polite">{noteLength} / 5,000 Unicode characters</span>
-        <span>Line breaks are kept.</span>
+        <span aria-live="polite">{noteLength} / 5,000 characters</span>
       </div>
       <div className="editor-actions">
         <button type="submit" className="text-action" disabled={busy}>{busy ? 'Saving note…' : 'Save note'}</button>
@@ -1417,7 +1973,7 @@ function progressDraftFor(item) {
   return { hoursPlayed: item.progress?.hoursPlayed === undefined ? '' : String(item.progress.hoursPlayed) };
 }
 
-function ProgressEditor({ item, library, label }) {
+function ProgressEditor({ item, library }) {
   const [draft, setDraft] = useState(() => progressDraftFor(item));
   const [validationError, setValidationError] = useState('');
   const busy = library.isActionBusy(item.id, 'progress');
@@ -1460,7 +2016,7 @@ function ProgressEditor({ item, library, label }) {
       className="tracking-editor progress-editor"
       onSubmit={(event) => { event.preventDefault(); saveProgress(); }}
     >
-      <div className="editor-label">Progress for {label}</div>
+      <div className="editor-label">Progress</div>
       {item.type === 'ANIME' && (
         <label htmlFor={`library-progress-episodes-${item.id}`}>
           Episodes watched
@@ -1549,7 +2105,7 @@ function ProgressEditor({ item, library, label }) {
   );
 }
 
-function RelationshipEditor({ kind, item, library, taxonomy, label }) {
+function RelationshipEditor({ kind, item, library, taxonomy }) {
   const isTag = kind === 'tag';
   const field = isTag ? 'tags' : 'collections';
   const resources = taxonomy[`${field}`];
@@ -1557,7 +2113,7 @@ function RelationshipEditor({ kind, item, library, taxonomy, label }) {
 
   return (
     <fieldset className="tracking-editor relationship-editor" disabled={taxonomy.status !== 'success'}>
-      <legend>{title} for {label}</legend>
+      <legend>{title}</legend>
       {taxonomy.status !== 'success' ? (
         <p className="editor-empty">
           {taxonomy.status === 'error' ? 'Relationships are unavailable. Retry the private relationship lists above.' : 'Loading private relationships…'}
@@ -1591,19 +2147,41 @@ function RelationshipEditor({ kind, item, library, taxonomy, label }) {
   );
 }
 
-function LibraryItem({ item, library, taxonomy, mediaEntry, onRetryArtwork }) {
+function LibraryItem({ item, user, library, taxonomy, mediaEntry, onRetryArtwork, onRequestArtwork, onRequestSignIn }) {
   const [imageFailed, setImageFailed] = useState(false);
+  const [isTrackingOpen, setTrackingOpen] = useState(false);
+  const cardRef = useRef(null);
   const media = mediaEntry?.media;
+  const trackingSupported = (item.type === 'TV' && item.provider === 'tmdb') ||
+    (item.type === 'ANIME' && ['anilist', 'myanimelist'].includes(item.provider));
+  const trackingMedia = trackingSupported && !media
+    ? { provider: item.provider, providerId: item.providerId, type: item.type, metadata: {} }
+    : media;
   const title = media?.title || item.providerId;
   useEffect(() => setImageFailed(false), [media?.image]);
   const label = libraryItemLabel(item);
   const itemError = library.getItemError(item.id);
   const isRemoving = library.isActionBusy(item.id, 'remove');
 
+  useEffect(() => {
+    if (!onRequestArtwork) return undefined;
+    if (typeof IntersectionObserver === 'undefined') {
+      onRequestArtwork(item);
+      return undefined;
+    }
+    const observer = new IntersectionObserver((observerEntries) => {
+      if (!observerEntries.some((entry) => entry.isIntersecting)) return;
+      onRequestArtwork(item);
+      observer.disconnect();
+    }, { rootMargin: '240px 0px' });
+    if (cardRef.current) observer.observe(cardRef.current);
+    return () => observer.disconnect();
+  }, [item, onRequestArtwork]);
+
   return (
-    <li className="library-item" aria-busy={library.isItemBusy(item.id)}>
+    <li ref={cardRef} className="library-item" aria-busy={library.isItemBusy(item.id)}>
       <div className="library-item__identity">
-        <p className="section-index">{getProviderLabel(item.provider).toUpperCase()} / {item.type}</p>
+        <p className="section-index">{getMediaTypeLabel(item.type.toLowerCase())}</p>
         <div className="library-cover">
           {media?.image && !imageFailed
             ? <img src={media.image} alt={`${title} cover`} loading="lazy" onError={() => setImageFailed(true)} />
@@ -1613,12 +2191,13 @@ function LibraryItem({ item, library, taxonomy, mediaEntry, onRetryArtwork }) {
         <p>{formatLibraryStatus(item.libraryStatus)}{item.favorite ? ' · Favorite' : ''}</p>
         {mediaEntry?.status === 'error' && <button type="button" className="text-action" onClick={onRetryArtwork}>Retry artwork for {label}</button>}
       </div>
-      <details className="library-edit">
-        <summary>Edit tracking for {title}</summary>
+      <details className="library-edit" onToggle={(event) => setTrackingOpen(event.currentTarget.open)}>
+        <summary>Edit tracking</summary>
       <div className="library-item__controls">
-        <label htmlFor={`library-status-${item.id}`}>Library status for {label}</label>
+        <label htmlFor={`library-status-${item.id}`}>Library Status</label>
         <select
           id={`library-status-${item.id}`}
+          aria-label={`Library Status for ${label}`}
           value={item.libraryStatus}
           onChange={(event) => library.update(item.id, { libraryStatus: event.target.value }, { actionKey: 'libraryStatus' })}
           disabled={library.isActionBusy(item.id, 'libraryStatus')}
@@ -1639,11 +2218,20 @@ function LibraryItem({ item, library, taxonomy, mediaEntry, onRetryArtwork }) {
           />
           <span>Favorite</span>
         </label>
-        <PersonalRating item={item} library={library} label={label} />
-        <ProgressEditor item={item} library={library} label={label} />
+        <PersonalRating item={item} library={library} />
+        <ProgressEditor item={item} library={library} />
+        {isTrackingOpen && (
+          <EpisodeTrackingSection
+            media={trackingMedia}
+            user={user}
+            library={library}
+            libraryItem={item}
+            onRequestSignIn={onRequestSignIn}
+          />
+        )}
         <NoteEditor item={item} library={library} label={label} />
-        <RelationshipEditor kind="tag" item={item} library={library} taxonomy={taxonomy} label={label} />
-        <RelationshipEditor kind="collection" item={item} library={library} taxonomy={taxonomy} label={label} />
+        <RelationshipEditor kind="tag" item={item} library={library} taxonomy={taxonomy} />
+        <RelationshipEditor kind="collection" item={item} library={library} taxonomy={taxonomy} />
         {itemError && <p className="form-error" role="alert">{formatApiError(itemError, 'This Library Item action was rejected by the server.')}</p>}
         <button
           type="button"
@@ -1651,7 +2239,7 @@ function LibraryItem({ item, library, taxonomy, mediaEntry, onRetryArtwork }) {
           onClick={() => library.remove(item.id)}
           disabled={isRemoving}
         >
-          {isRemoving ? 'Removing…' : `Remove ${label}`}
+          {isRemoving ? 'Removing…' : `Remove ${title}`}
         </button>
       </div>
       </details>
@@ -1696,7 +2284,7 @@ function LibraryFilters({ library, taxonomy }) {
     <form className="library-filters" onSubmit={apply} aria-label="Filter Library Items">
       <div className="library-filters__heading">
         <div>
-          <h3>Filter the signal.</h3>
+          <h3>Filter</h3>
         </div>
         <p>Filters stay applied while you load more Library Items.</p>
       </div>
@@ -1704,7 +2292,7 @@ function LibraryFilters({ library, taxonomy }) {
         <label htmlFor="library-filter-status">
           Library Status
           <select id="library-filter-status" value={draft.libraryStatus} onChange={(event) => setDraft((current) => ({ ...current, libraryStatus: event.target.value }))}>
-            <option value="">All statuses</option>
+            <option value="">All Status</option>
             {LIBRARY_STATUS_VALUES.map((status) => <option value={status} key={status}>{formatLibraryStatus(status)}</option>)}
           </select>
         </label>
@@ -1762,12 +2350,12 @@ function TaxonomyResourceRow({ kind, resource, taxonomy, onRename, onRemove }) {
             onChange={(event) => { if ([...event.target.value].length <= 50) setName(event.target.value); }}
             disabled={busy}
           />
-          <button type="submit" className="text-action" disabled={busy}>{busy ? 'Saving…' : 'Rename'}</button>
+          <button type="submit" className="text-action taxonomy-resource__action" disabled={busy}>{busy ? 'Saving…' : 'Rename'}</button>
         </div>
       </form>
       <button
         type="button"
-        className="text-action text-action--danger"
+        className="text-action text-action--danger taxonomy-resource__action"
         aria-label={`Delete ${kind} ${resource.name}`}
         onClick={() => onRemove(kind, resource.id)}
         disabled={busy}
@@ -1803,7 +2391,7 @@ function TaxonomyResourceGroup({ kind, resources, taxonomy, onRename, onRemove }
           if (created) setName('');
         }}
       >
-        <label htmlFor={`new-${kind}`}>Create {singular}</label>
+        <label className="visually-hidden" htmlFor={`new-${kind}`}>New {singular.toLowerCase()} name</label>
         <div className="taxonomy-create__fields">
           <input
             id={`new-${kind}`}
@@ -1872,13 +2460,7 @@ function LibraryView({ auth, library, taxonomy, onRequestSignIn, onRename, onRem
 
   return (
     <section className="library-section" id="library" aria-labelledby="library-title" aria-busy={loading}>
-      <div className="section-heading">
-        <div>
-          <h2 id="library-title">Your library.</h2>
-
-        </div>
-         <code>GET /api/library</code>
-       </div>
+      <h2 id="library-title" className="visually-hidden">My Library</h2>
 
       {!auth.user && (
         <div className="library-state">
@@ -1922,7 +2504,7 @@ function LibraryView({ auth, library, taxonomy, onRequestSignIn, onRename, onRem
 
       {auth.user && library.status === 'success' && library.results.length > 0 && (
         <ul className="library-list" aria-label="Saved library items">
-          {library.results.map((item) => <LibraryItem item={item} library={library} taxonomy={taxonomy} key={item.id} mediaEntry={artwork.entries[mediaIdentity(item)]} onRetryArtwork={() => artwork.retry(item)} />)}
+          {library.results.map((item) => <LibraryItem item={item} user={auth.user} library={library} taxonomy={taxonomy} key={item.id} mediaEntry={artwork.entries[mediaIdentity(item)]} onRetryArtwork={() => artwork.retry(item)} onRequestArtwork={artwork.request} onRequestSignIn={onRequestSignIn} />)}
         </ul>
       )}
 
@@ -1949,12 +2531,13 @@ function LibraryView({ auth, library, taxonomy, onRequestSignIn, onRename, onRem
 }
 
 export default function App() {
-  const { status, error, retry } = useHealthCheck();
   const [authMode, setAuthMode] = useState('login');
   const [signInPrompt, setSignInPrompt] = useState('');
   const [theme, setTheme] = useState(getInitialTheme);
   const [view, setView] = useState('discover');
+  const [resetToken, setResetToken] = useState(() => new URLSearchParams(window.location.search).get('resetToken') ?? '');
   const mainRef = useRef(null);
+  const themeTransitionRef = useRef(null);
   const navigate = (nextView) => {
     setView(nextView);
     setSignInPrompt('');
@@ -1968,6 +2551,42 @@ export default function App() {
     document.documentElement.dataset.theme = theme;
     try { window.localStorage.setItem(THEME_STORAGE_KEY, theme); } catch { /* Session-only theme when storage is unavailable. */ }
   }, [theme]);
+
+  useEffect(() => () => {
+    if (themeTransitionRef.current) window.clearTimeout(themeTransitionRef.current);
+    document.documentElement.classList.remove('theme-transition');
+    document.documentElement.style.removeProperty('--theme-transition-x');
+    document.documentElement.style.removeProperty('--theme-transition-y');
+  }, []);
+
+  const toggleTheme = (event) => {
+    const root = document.documentElement;
+    if (themeTransitionRef.current) window.clearTimeout(themeTransitionRef.current);
+    themeTransitionRef.current = null;
+    const button = event?.currentTarget;
+    const buttonRect = button?.getBoundingClientRect?.();
+    if (buttonRect) {
+      root.style.setProperty('--theme-transition-x', `${buttonRect.left + buttonRect.width / 2}px`);
+      root.style.setProperty('--theme-transition-y', `${buttonRect.top + buttonRect.height / 2}px`);
+    }
+    const nextTheme = theme === 'dark' ? 'light' : 'dark';
+    if (typeof document.startViewTransition === 'function') {
+      const transition = document.startViewTransition(() => setTheme(nextTheme));
+      const cleanup = () => {
+        root.style.removeProperty('--theme-transition-x');
+        root.style.removeProperty('--theme-transition-y');
+      };
+      if (transition?.finished?.then) transition.finished.then(cleanup, cleanup);
+      else window.setTimeout(cleanup, 560);
+      return;
+    }
+    root.classList.add('theme-transition');
+    themeTransitionRef.current = window.setTimeout(() => {
+      root.classList.remove('theme-transition');
+      themeTransitionRef.current = null;
+    }, 220);
+    setTheme(nextTheme);
+  };
 
   const handleAuthenticationRequired = useCallback(() => {
     auth.clearSession();
@@ -1985,10 +2604,26 @@ export default function App() {
   });
 
   const artwork = useLibraryMedia(library.results, { enabled: view === 'library' && Boolean(auth.user), userId: auth.user?.id });
-  const saveMedia = async (media) => {
+  const [saveTarget, setSaveTarget] = useState(null);
+  const closeSaveTarget = useCallback(() => setSaveTarget(null), []);
+  const saveMediaToDestination = async (media, destination) => {
     const item = await library.save(media);
-    if (item) artwork.remember(media);
-    return item;
+    if (!item) return null;
+    artwork.remember(media);
+    const destinations = Array.isArray(destination) ? destination : destination ? [destination] : [];
+    let attached = true;
+    for (const target of destinations) {
+      if (!await library.attach(item.id, target.kind, target.resource)) attached = false;
+    }
+    return { item, attached };
+  };
+  const saveMedia = async (media) => {
+    const hasDestinations = taxonomy.status === 'success' && (taxonomy.tags.length > 0 || taxonomy.collections.length > 0);
+    if (hasDestinations) {
+      setSaveTarget(media);
+      return null;
+    }
+    return saveMediaToDestination(media, null);
   };
 
   const renameResource = useCallback((kind, id, name) => taxonomy.update(kind, id, name), [taxonomy.update]);
@@ -2002,6 +2637,17 @@ export default function App() {
     setAuthMode('login');
     setSignInPrompt('Sign in to save this reference to your library.');
   };
+  const openAuth = (mode) => {
+    setSignInPrompt('');
+    if (mode !== 'account') setAuthMode(mode);
+    navigate('account');
+  };
+  const clearResetToken = () => {
+    setResetToken('');
+    const url = new URL(window.location.href);
+    url.searchParams.delete('resetToken');
+    window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+  };
 
   return (
     <div className="app-shell">
@@ -2011,46 +2657,38 @@ export default function App() {
           <span className="wordmark__mark"><img src="/mainIcon.svg" alt="" /></span>
           <span className="wordmark__copy"><strong>GORAKU</strong><small>BASE</small></span>
         </button>
-        <p className="sidebar__label">Your media space</p>
         <nav className="sidebar-nav" aria-label="Primary">
-          {[['discover', 'Discover', HomeIcon], ['search', 'Search', SearchIcon], ['library', 'My Library', LibraryIcon], ['account', 'Account', UserIcon], ['about', 'About & status', InfoIcon]].map(([key, label, Icon]) => (
+          {[['discover', 'Discover', HomeIcon], ['search', 'Search', SearchIcon], ['library', 'My Library', LibraryIcon], ['account', 'Account', UserIcon]].map(([key, label, Icon]) => (
             <button key={key} type="button" className={`sidebar-nav__link${view === key ? ' sidebar-nav__link--active' : ''}`} aria-current={view === key ? 'page' : undefined} aria-label={label} title={label} onClick={() => navigate(key)}><Icon /><span>{label}</span></button>
           ))}
         </nav>
         <div className="sidebar__bottom">
-          <div className="sidebar-status">
-            <span className={`sidebar-status__dot sidebar-status__dot--${status}`} aria-hidden="true" />
-            <span><strong>{status === 'connected' ? 'Connected' : status === 'loading' ? 'Checking' : 'Offline'}</strong><small>API status</small></span>
-          </div>
+          {auth.user ? (
+            <button type="button" className="sidebar-account" onClick={() => openAuth('account')} title="Open account">
+              <UserAvatar user={auth.user} className="sidebar-account__avatar" />
+              <span><strong>{auth.user.username}</strong><small>Account</small></span>
+            </button>
+          ) : (
+            <button type="button" className="sidebar-signup" onClick={() => openAuth('register')}>
+              <span><strong>Sign up</strong></span>
+              <ArrowIcon />
+            </button>
+          )}
         </div>
       </aside>
 
       <div className="app-main">
         <header className="topbar">
-          <strong className="view-title">{{ discover: 'Discover', search: 'Search', library: 'My Library', account: 'Account', about: 'About & status' }[view]}</strong>
+          <strong className="view-title">{{ discover: 'Discover', search: 'Search', library: 'My Library', account: 'Account' }[view]}</strong>
           <div className="topbar__actions">
-            <ThemeToggle theme={theme} onToggle={() => setTheme((current) => current === 'dark' ? 'light' : 'dark')} />
+            <AuthActions user={auth.user} onOpenAuth={openAuth} />
+            <ThemeToggle theme={theme} onToggle={toggleTheme} />
           </div>
         </header>
 
       <main id="main-content" ref={mainRef} tabIndex={-1}>
         {signInPrompt && view !== 'account' && <p className="auth-prompt" role="status">{signInPrompt} Select Account in the sidebar.</p>}
         <div hidden={view !== 'discover'}>
-        <section className="intro" id="discover" aria-labelledby="page-title">
-          <div className="intro__content">
-            <h1 id="page-title">Find stories<br /><span>worth keeping.</span></h1>
-            <p className="intro-copy">
-              Search anime, movies, TV, and games from the sources you already trust. Save the ones that stay with you.
-            </p>
-            <p className="intro-hint">Browse a catalog below, or select Search in the sidebar.</p>
-          </div>
-          <div className="intro__visual" aria-hidden="true">
-            <div className="intro__halo" />
-            <img src="/mainIcon.svg" alt="" />
-            <span>PERSONAL MEDIA ARCHIVE</span>
-          </div>
-        </section>
-
         <MediaSearch mode="discover" active={view === 'discover'} user={auth.user} library={library} onSave={saveMedia} onRequestSignIn={requestSignIn} />
         </div>
         <div hidden={view !== 'search'}>
@@ -2075,70 +2713,11 @@ export default function App() {
 
         </div>
         <div hidden={view !== 'account'}>
-        <AuthPanel auth={auth} mode={authMode} onModeChange={(nextMode) => { setAuthMode(nextMode); setSignInPrompt(''); }} signInPrompt={signInPrompt} />
+        <AuthPanel auth={auth} mode={authMode} onModeChange={(nextMode) => { setAuthMode(nextMode); setSignInPrompt(''); }} signInPrompt={signInPrompt} resetToken={resetToken} onClearResetToken={clearResetToken} />
 
-        </div>
-        <div hidden={view !== 'about'}>
-        <section className="health-section" id="health-check" aria-labelledby="health-title">
-          <div className="section-heading">
-            <div>
-              <h2 id="health-title">Backend connection</h2>
-            </div>
-            <code>GET /api/health</code>
-          </div>
-
-          <ConnectionStatus status={status} error={error} onRetry={retry} />
-
-          <dl className="signal-details">
-            <div>
-              <dt>Expected status</dt>
-              <dd>200 OK</dd>
-            </div>
-            <div>
-              <dt>Service identity</dt>
-              <dd>goraku-base-api</dd>
-            </div>
-            <div>
-              <dt>Browser request</dt>
-              <dd>relative /api path</dd>
-            </div>
-          </dl>
-        </section>
-
-        <section className="next-section" id="next-signal" aria-labelledby="next-title">
-          <div className="section-heading section-heading--quiet">
-            <div>
-              <h2 id="next-title">The signal gets richer next.</h2>
-            </div>
-          </div>
-          <p>Discovery, local authentication, and private tracking libraries are live for local and staging use. Google authentication and account recovery remain future signals.</p>
-        </section>
-
-      <footer role="contentinfo" className="site-footer" id="credits" aria-labelledby="credits-title">
-        <div className="site-footer__identity">
-          <span>GORAKU BASE / PHASE 6.6</span>
-          <span>ANILIST + MYANIMELIST + TMDB + THEGAMESDB + RAWG / UNOFFICIAL</span>
-        </div>
-        <div className="tmdb-credits">
-          <div>
-            <h2 id="credits-title">TMDB</h2>
-          </div>
-          <div className="tmdb-credits__notice">
-            <a href={TMDB_URL} target="_blank" rel="noreferrer">
-              <img className="tmdb-credits__logo" src={TMDB_LOGO_URL} alt="TMDB" width="128" height="36" />
-            </a>
-            <p>{TMDB_NOTICE}</p>
-            <nav className="provider-credits" aria-label="Provider credits">
-              <a href={ANILIST_URL} target="_blank" rel="noreferrer">AniList</a>
-              <a href={MYANIMELIST_URL} target="_blank" rel="noreferrer">MyAnimeList</a>
-              <a href={THEGAMESDB_URL} target="_blank" rel="noreferrer">TheGamesDB</a>
-              <a href={RAWG_URL} target="_blank" rel="noreferrer">RAWG</a>
-            </nav>
-          </div>
-        </div>
-      </footer>
         </div>
       </main>
+      <SaveDestinationDialog media={saveTarget} taxonomy={taxonomy} onSave={saveMediaToDestination} onClose={closeSaveTarget} />
       </div>
     </div>
   );

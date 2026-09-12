@@ -7,6 +7,7 @@ import {
   assertDedicatedTestDatabase,
   assertSafeResponse,
   createMigratedSchema,
+  createTestEmailDelivery,
   dropTestSchema,
   sessionCookieValue,
   testDatabaseUrl
@@ -14,11 +15,27 @@ import {
 
 const APP_ORIGIN = 'http://localhost:5173';
 
+async function registerVerified(app, emailDelivery, { username, email }) {
+  const registration = await request(app)
+    .post('/api/auth/register')
+    .set('Origin', APP_ORIGIN)
+    .send({ username, email, password: 'correct horse battery staple!' });
+  assert.equal(registration.status, 202);
+  assertSafeResponse(registration);
+  const token = emailDelivery.verificationTokens.get(email.toLowerCase());
+  assert.ok(token);
+  const verification = await request(app).get(`/api/auth/verify-email?token=${encodeURIComponent(token)}`);
+  assert.equal(verification.status, 303);
+  assertSafeResponse(verification);
+  return sessionCookieValue(verification);
+}
+
 describe('PostgreSQL Tag and Collection HTTP API', () => {
   let pool;
   let schemaPool;
   let schemaName;
   let app;
+  let emailDelivery;
   let ownerCookie;
   let otherCookie;
 
@@ -26,20 +43,12 @@ describe('PostgreSQL Tag and Collection HTTP API', () => {
     assertDedicatedTestDatabase(testDatabaseUrl);
     pool = createDatabasePool({ databaseUrl: testDatabaseUrl });
     ({ schemaName, schemaPool } = await createMigratedSchema(pool, 'tags_collections_test'));
-    app = createApp({ databasePool: schemaPool, appOrigin: APP_ORIGIN });
+    emailDelivery = createTestEmailDelivery();
+    app = createApp({ databasePool: schemaPool, appOrigin: APP_ORIGIN, emailDelivery });
 
     const suffix = `${process.pid}-${Date.now()}`;
-    const register = async (email) => {
-      const response = await request(app)
-        .post('/api/auth/register')
-        .set('Origin', APP_ORIGIN)
-        .send({ email, password: 'correct horse battery staple!' });
-      assert.equal(response.status, 201);
-      assertSafeResponse(response);
-      return sessionCookieValue(response);
-    };
-    ownerCookie = await register(`tags-owner-${suffix}@example.com`);
-    otherCookie = await register(`tags-other-${suffix}@example.com`);
+    ownerCookie = await registerVerified(app, emailDelivery, { email: `tags-owner-${suffix}@example.com`, username: `tags_owner_${suffix.replace('-', '_')}`.slice(0, 32) });
+    otherCookie = await registerVerified(app, emailDelivery, { email: `tags-other-${suffix}@example.com`, username: `tags_other_${suffix.replace('-', '_')}`.slice(0, 32) });
   });
 
   after(async () => {

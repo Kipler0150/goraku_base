@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import App from './App.jsx';
 import { selectView } from './test-navigation.js';
@@ -10,7 +10,7 @@ const item = { id:'00000000-0000-4000-8000-000000000001',provider:'tmdb',type:'M
 function installFetch() {
   vi.stubGlobal('fetch',vi.fn(async url => ({ok:true,status:200,json:async()=>{
     if(url==='/api/health') return {status:'ok',service:'goraku-base-api'};
-    if(url==='/api/auth/me') return {id:'reader',email:'reader@example.test'};
+    if(url==='/api/auth/me') return {id:'reader',username:'reader',email:'reader@example.test'};
     if(url.startsWith('/api/media/tmdb/movie/42')) return movie;
     return {results:url.startsWith('/api/library?')?[item]:[],pagination:{page:1,perPage:20,hasMore:false},source:'tmdb',providerErrors:[]};
   }})));
@@ -38,7 +38,12 @@ it('shows a restored favorite title and cover while keeping tracking collapsed',
   const cover=screen.getByRole('img',{name:'Arrival cover'});
   expect(cover).toHaveAttribute('src',movie.image);
   expect(screen.getByRole('checkbox',{name:'Favorite TMDB movie 42'})).not.toBeVisible();
-  fireEvent.click(screen.getByText('Edit tracking for Arrival'));
+  const libraryItem = screen.getByRole('heading',{name:'Arrival'}).closest('li');
+  expect(within(libraryItem).getByText('Movies', { exact: true })).toBeVisible();
+  expect(within(libraryItem).queryByText('TMDB / MOVIE')).not.toBeInTheDocument();
+  expect(screen.getByRole('option', { name: 'All Status' })).toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: 'Your library.' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByText('Edit tracking', { exact: true }));
   expect(screen.getByRole('checkbox',{name:'Favorite TMDB movie 42'})).toBeChecked();
   fireEvent.error(cover);
   expect(screen.getByText('Cover unavailable')).toBeVisible();

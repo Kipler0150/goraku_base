@@ -1,4 +1,5 @@
 import { ProviderError, PROVIDER_ERROR_CODES } from './providers/errors.js';
+import { filteredProviderForType, hasSearchFilters } from './media-filters.js';
 
 export const PROVIDERS_UNAVAILABLE_CODE = 'PROVIDERS_UNAVAILABLE';
 export const MIN_PROVIDER_QUERY_LENGTH = 3;
@@ -6,15 +7,16 @@ export const MEDIA_SEARCH_TYPES = Object.freeze(['anime', 'movie', 'tv', 'game',
 
 const PROVIDER_CODES = new Set(Object.values(PROVIDER_ERROR_CODES));
 const PROVIDER_LABELS = Object.freeze({ anilist: 'AniList', myanimelist: 'MyAnimeList', tmdb: 'TMDB', thegamesdb: 'TheGamesDB', rawg: 'RAWG' });
-const DEFAULT_PROVIDERS = Object.freeze({ anime: 'anilist', movie: 'tmdb', tv: 'tmdb', game: 'thegamesdb' });
+const DEFAULT_PROVIDERS = Object.freeze({ anime: 'myanimelist', movie: 'tmdb', tv: 'tmdb', game: 'thegamesdb' });
 const COMBINED_LANE_TYPES = Object.freeze(['anime', 'movie', 'tv', 'game']);
 const COMBINED_LANE_CONFIG = Object.freeze({
-  anime: Object.freeze({ provider: 'anilist', perPage: 12 }),
+  anime: Object.freeze({ provider: 'myanimelist', perPage: 12 }),
   movie: Object.freeze({ provider: 'tmdb', perPage: 20 }),
   tv: Object.freeze({ provider: 'tmdb', perPage: 20 }),
   game: Object.freeze({ provider: 'thegamesdb', perPage: 20 })
 });
 const PROVIDER_SOURCES = new Set(['anilist', 'myanimelist', 'tmdb', 'thegamesdb', 'rawg']);
+const DEFAULT_LATEST_PROVIDERS = Object.freeze({ anime: 'myanimelist', movie: 'tmdb', tv: 'tmdb', game: 'rawg' });
 
 export function formatProviderFailure(error, provider) {
   const code = error instanceof ProviderError && PROVIDER_CODES.has(error.code)
@@ -95,8 +97,10 @@ async function callProvider(adapter, validated, provider = validated.provider, o
     type,
     cursor: _cursor,
     retryProvider: _retryProvider,
+    filters: validatedFilters,
     ...sharedOptions
   } = validated;
+  if (hasSearchFilters(validatedFilters)) sharedOptions.filters = validatedFilters;
   const providerOptions = provider === 'tmdb' ? { type, ...sharedOptions } : sharedOptions;
   const search = adapter?.searchMedia ?? adapter?.searchAnime;
   if (typeof search !== 'function') throw new ProviderError(PROVIDER_ERROR_CODES.UNAVAILABLE);
@@ -106,6 +110,28 @@ async function callProvider(adapter, validated, provider = validated.provider, o
     // Observability must never change Provider behavior.
   }
   return search.call(adapter, providerOptions);
+}
+
+async function callLatestProvider(adapter, validated, provider, onProviderRequest = () => {}) {
+  if (isDisabled(adapter)) throw new ProviderError(PROVIDER_ERROR_CODES.UNAVAILABLE);
+  const {
+    provider: _provider,
+    type,
+    query: _query,
+    cursor: _cursor,
+    retryProvider: _retryProvider,
+    filters: _filters,
+    ...sharedOptions
+  } = validated;
+  const latest = adapter?.getLatest ?? adapter?.getLatestMedia;
+  if (typeof latest !== 'function') throw new ProviderError(PROVIDER_ERROR_CODES.UNAVAILABLE);
+  const providerOptions = provider === 'tmdb' ? { type, ...sharedOptions } : sharedOptions;
+  try {
+    onProviderRequest({ provider, operation: 'latest' });
+  } catch {
+    // Observability must never change Provider behavior.
+  }
+  return latest.call(adapter, providerOptions);
 }
 
 function normalizeSearchResponse(result, source, providerErrors = []) {
@@ -230,61 +256,61 @@ async function searchAnimeLane(validated, laneState, adapters, onProviderRequest
   const selectedProvider = validated.retryProvider && laneState.failed
     ? validated.retryProvider
     : laneState.provider;
-  if (selectedProvider === 'myanimelist') {
+  if (selectedProvider === 'anilist') {
     try {
       const result = await callProvider(
-        adapters.myanimelist,
-        { ...validated, type: 'anime', provider: 'myanimelist', page: laneState.nextPage, perPage: 12 },
-        'myanimelist',
+        adapters.anilist,
+        { ...validated, type: 'anime', provider: 'anilist', page: laneState.nextPage, perPage: 12 },
+        'anilist',
         onProviderRequest
       );
       return {
         success: true,
-        response: normalizeSearchResponse(result, 'myanimelist'),
+        response: normalizeSearchResponse(result, 'anilist'),
         failures: [],
-        attemptedProviders: ['myanimelist']
+        attemptedProviders: ['anilist']
       };
     } catch (error) {
-      return { success: false, failures: [failureRecord(error, 'myanimelist')], attemptedProviders: ['myanimelist'] };
+      return { success: false, failures: [failureRecord(error, 'anilist')], attemptedProviders: ['anilist'] };
     }
   }
 
   try {
     const result = await callProvider(
-      adapters.anilist,
-      { ...validated, type: 'anime', provider: 'anilist', page: laneState.nextPage, perPage: 12 },
-      'anilist',
+      adapters.myanimelist,
+      { ...validated, type: 'anime', provider: 'myanimelist', page: laneState.nextPage, perPage: 12 },
+      'myanimelist',
       onProviderRequest
     );
     return {
       success: true,
-      response: normalizeSearchResponse(result, 'anilist'),
+      response: normalizeSearchResponse(result, 'myanimelist'),
       failures: [],
-      attemptedProviders: ['anilist']
+      attemptedProviders: ['myanimelist']
     };
-  } catch (anilistError) {
-    if (!isProviderUnavailable(anilistError) || isDisabled(adapters.myanimelist)) {
-      return { success: false, failures: [failureRecord(anilistError, 'anilist')], attemptedProviders: ['anilist'] };
+  } catch (myanimelistError) {
+    if (!isProviderUnavailable(myanimelistError) || isDisabled(adapters.anilist)) {
+      return { success: false, failures: [failureRecord(myanimelistError, 'myanimelist')], attemptedProviders: ['myanimelist'] };
     }
 
     try {
       const result = await callProvider(
-        adapters.myanimelist,
-        { ...validated, type: 'anime', provider: 'myanimelist', page: laneState.nextPage, perPage: 12 },
-        'myanimelist',
+        adapters.anilist,
+        { ...validated, type: 'anime', provider: 'anilist', page: laneState.nextPage, perPage: 12 },
+        'anilist',
         onProviderRequest
       );
       return {
         success: true,
-        response: normalizeSearchResponse(result, 'myanimelist'),
-        failures: [failureRecord(anilistError, 'anilist')],
-        attemptedProviders: ['anilist', 'myanimelist']
+        response: normalizeSearchResponse(result, 'anilist'),
+        failures: [failureRecord(myanimelistError, 'myanimelist')],
+        attemptedProviders: ['myanimelist', 'anilist']
       };
-    } catch (myanimelistError) {
+    } catch (anilistError) {
       return {
         success: false,
-        failures: failureRecords(anilistError, ['anilist']).concat(failureRecord(myanimelistError, 'myanimelist')),
-        attemptedProviders: ['anilist', 'myanimelist']
+        failures: failureRecords(myanimelistError, ['myanimelist']).concat(failureRecord(anilistError, 'anilist')),
+        attemptedProviders: ['myanimelist', 'anilist']
       };
     }
   }
@@ -354,7 +380,52 @@ async function searchGameLane(validated, laneState, adapters, onProviderRequest)
   }
 }
 
+async function latestCombinedLane(type, validated, laneState, adapters, onProviderRequest) {
+  const preferredProvider = type === 'game' && laneState.provider === 'thegamesdb' ? 'rawg' : laneState.provider;
+  const latestOptions = {
+    ...validated,
+    type,
+    provider: preferredProvider,
+    page: laneState.nextPage,
+    perPage: COMBINED_LANE_CONFIG[type].perPage
+  };
+  try {
+    const result = await callLatestProvider(adapters[preferredProvider], latestOptions, preferredProvider, onProviderRequest);
+    return {
+      success: true,
+      response: normalizeSearchResponse(result, preferredProvider),
+      failures: [],
+      attemptedProviders: [preferredProvider]
+    };
+  } catch (preferredError) {
+    if (type !== 'anime' || preferredProvider !== 'myanimelist' || isDisabled(adapters.anilist) || !isProviderUnavailable(preferredError)) {
+      return { success: false, failures: [failureRecord(preferredError, preferredProvider)], attemptedProviders: [preferredProvider] };
+    }
+    try {
+      const result = await callLatestProvider(
+        adapters.anilist,
+        { ...latestOptions, provider: 'anilist' },
+        'anilist',
+        onProviderRequest
+      );
+      return {
+        success: true,
+        response: normalizeSearchResponse(result, 'anilist'),
+        failures: [failureRecord(preferredError, 'myanimelist')],
+        attemptedProviders: ['myanimelist', 'anilist']
+      };
+    } catch (fallbackError) {
+      return {
+        success: false,
+        failures: [failureRecord(preferredError, 'myanimelist'), failureRecord(fallbackError, 'anilist')],
+        attemptedProviders: ['myanimelist', 'anilist']
+      };
+    }
+  }
+}
+
 async function searchCombinedLane(type, validated, laneState, adapters, onProviderRequest) {
+  if (!validated.query) return latestCombinedLane(type, validated, laneState, adapters, onProviderRequest);
   if (type === 'anime') return searchAnimeLane(validated, laneState, adapters, onProviderRequest);
   if (type === 'game') return searchGameLane(validated, laneState, adapters, onProviderRequest);
 
@@ -449,7 +520,7 @@ function combinedResponse(results, state, page) {
 
 async function searchCombined(validated, adapters, onProviderRequest) {
   const state = validateCombinedCursor(validated);
-  if (validated.query.length < MIN_PROVIDER_QUERY_LENGTH && !validated.cursor) {
+  if (validated.query.length > 0 && validated.query.length < MIN_PROVIDER_QUERY_LENGTH && !validated.cursor) {
     for (const type of COMBINED_LANE_TYPES) {
       const lane = state.lanes[type];
       lane.lastPage = 1;
@@ -522,7 +593,63 @@ export function createMediaSearchService({
       const type = validated.type ?? 'anime';
       if (type === 'all') return searchCombined(validated, adapters, onProviderRequest);
 
-      const defaultProvider = DEFAULT_PROVIDERS[type] ?? 'anilist';
+      if (hasSearchFilters(validated.filters)) {
+        const provider = filteredProviderForType(type);
+        if (!provider || isDisabled(adapters[provider])) {
+          throw Object.assign(new ProviderError(PROVIDER_ERROR_CODES.UNAVAILABLE), { provider });
+        }
+        if (type !== 'movie' && type !== 'tv' && validated.query.length > 0 && validated.query.length < MIN_PROVIDER_QUERY_LENGTH) {
+          return normalizeSearchResponse({
+            results: [],
+            pagination: { page: validated.page, perPage: validated.perPage, hasMore: false }
+          }, provider);
+        }
+        try {
+          return normalizeSearchResponse(
+            await callProvider(adapters[provider], { ...validated, provider }, provider, onProviderRequest),
+            provider
+          );
+        } catch (error) {
+          throw Object.assign(error, { provider });
+        }
+      }
+
+      const defaultProvider = DEFAULT_PROVIDERS[type] ?? 'myanimelist';
+
+      if (!validated.query) {
+        const provider = validated.provider ?? DEFAULT_LATEST_PROVIDERS[type] ?? defaultProvider;
+        if (type === 'anime' && !validated.provider) {
+          try {
+            return normalizeSearchResponse(
+              await callLatestProvider(myanimelistAdapter, { ...validated, provider }, provider, onProviderRequest),
+              provider
+            );
+          } catch (myanimelistError) {
+            if (!isProviderUnavailable(myanimelistError) || isDisabled(anilistAdapter)) {
+              if (isProviderUnavailable(myanimelistError)) throw combinedFailure(type);
+              throw Object.assign(myanimelistError, { provider });
+            }
+            try {
+              return normalizeSearchResponse(
+                await callLatestProvider(anilistAdapter, { ...validated, provider: 'anilist' }, 'anilist', onProviderRequest),
+                'anilist',
+                [providerFailureEntry(myanimelistError, 'myanimelist')]
+              );
+            } catch (anilistError) {
+              if (isProviderUnavailable(anilistError)) throw combinedFailure(type);
+              throw Object.assign(anilistError, { provider: 'anilist' });
+            }
+          }
+        }
+        try {
+          return normalizeSearchResponse(
+            await callLatestProvider(adapters[provider], { ...validated, provider }, provider, onProviderRequest),
+            provider
+          );
+        } catch (error) {
+          throw Object.assign(error, { provider });
+        }
+      }
 
       if (validated.query.length < MIN_PROVIDER_QUERY_LENGTH) {
         return normalizeSearchResponse({
@@ -572,21 +699,22 @@ export function createMediaSearchService({
       }
 
       try {
-        return normalizeSearchResponse(await callProvider(anilistAdapter, validated, 'anilist', onProviderRequest), 'anilist');
-      } catch (anilistError) {
-        if (!isProviderUnavailable(anilistError) || isDisabled(myanimelistAdapter)) {
-          if (isProviderUnavailable(anilistError)) throw combinedFailure(type);
-          throw Object.assign(anilistError, { provider: 'anilist' });
+        return normalizeSearchResponse(await callProvider(myanimelistAdapter, validated, 'myanimelist', onProviderRequest), 'myanimelist');
+      } catch (myanimelistError) {
+        if (!isProviderUnavailable(myanimelistError) || isDisabled(anilistAdapter)) {
+          if (isProviderUnavailable(myanimelistError)) throw combinedFailure(type);
+          throw Object.assign(myanimelistError, { provider: 'myanimelist' });
         }
 
         try {
           return normalizeSearchResponse(
-            await callProvider(myanimelistAdapter, { ...validated, provider: 'myanimelist' }, 'myanimelist', onProviderRequest),
-            'myanimelist',
-            [providerFailureEntry(anilistError, 'anilist')]
+            await callProvider(anilistAdapter, { ...validated, provider: 'anilist' }, 'anilist', onProviderRequest),
+            'anilist',
+            [providerFailureEntry(myanimelistError, 'myanimelist')]
           );
-        } catch {
-          throw combinedFailure(type);
+        } catch (anilistError) {
+          if (isProviderUnavailable(anilistError)) throw combinedFailure(type);
+          throw Object.assign(anilistError, { provider: 'anilist' });
         }
       }
     }

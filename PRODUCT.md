@@ -31,7 +31,7 @@ Local development uses native npm commands or Docker Compose. The health endpoin
 - The React client exposes the health proof, public media search, local authentication, and an ownership-scoped reference Library.
 - The browser uses a relative API URL; Express owns the API boundary and safe error envelopes.
 - Provider-owned Media, User-owned Library Items, and User-owned tracking data remain separate concepts.
-- Phase 6 tracking and Phase 7 Discovery enrichment/runtime reliability are implemented and verified for local/staging use. Phase 8 is reserved for presentation refinement. Provider hydration into Library reads, production hardening, and public deployment remain outside the verified surface.
+- Phase 6 tracking, Phase 7 Discovery enrichment/runtime reliability, and Phase 8 presentation refinement are implemented for local/staging use. Provider hydration into Library reads, production hardening, and public deployment remain outside the verified surface.
 
 ## Brand Commitments
 

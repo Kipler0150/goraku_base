@@ -96,6 +96,31 @@ describe('MyAnimeList adapter', () => {
     assert.equal(result.results[0].providerRating, null);
   });
 
+  it('maps airing rankings to Currently airing and seasonal releases to Latest releases', async () => {
+    const requests = [];
+    const adapter = createMyAnimeListAdapter({
+      clientId: 'mal-client-id',
+      clock: () => new Date('2026-09-11T00:00:00.000Z'),
+      request: async (url) => {
+        requests.push(new URL(url));
+        return response(animePage([{ node: { id: requests.length, title: `Anime ${requests.length}` } }], 'next'));
+      }
+    });
+
+    const airing = await adapter.getTrending({ page: 2, perPage: 4, includeAdult: false });
+    const seasonal = await adapter.getLatest({ page: 1, perPage: 4, includeAdult: false });
+
+    assert.equal(requests[0].pathname, '/v2/anime/ranking');
+    assert.equal(requests[0].searchParams.get('ranking_type'), 'airing');
+    assert.equal(requests[0].searchParams.get('offset'), '4');
+    assert.equal(requests[0].searchParams.get('limit'), '4');
+    assert.equal(requests[1].pathname, '/v2/anime/season/2026/summer');
+    assert.equal(requests[1].searchParams.get('sort'), 'anime_score');
+    assert.equal(requests[1].searchParams.get('offset'), '0');
+    assert.equal(airing.results[0].provider, 'myanimelist');
+    assert.equal(seasonal.results[0].provider, 'myanimelist');
+  });
+
   it('maps provider failures and reports missing credentials without making a request', async () => {
     let requestCount = 0;
     const unavailable = createMyAnimeListAdapter({

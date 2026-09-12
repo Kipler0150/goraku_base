@@ -20,6 +20,19 @@ it('enriches restored references only while Library is selected and reuses cache
   expect(getMediaDetails).toHaveBeenCalledTimes(1);
 });
 
+it('starts artwork lookups for requested Library Items without serial pacing', async () => {
+  const items = [
+    item,
+    { ...item, providerId: '43' },
+    { ...item, providerId: '44' }
+  ];
+  getMediaDetails.mockImplementation(() => new Promise(() => {}));
+  const { unmount } = renderHook(() => useLibraryMedia(items, { enabled: true, userId: 'one' }));
+
+  await waitFor(() => expect(getMediaDetails).toHaveBeenCalledTimes(items.length));
+  unmount();
+});
+
 it('exposes a retryable artwork failure without modifying Library tracking', async () => {
   getMediaDetails.mockRejectedValueOnce(new Error('Provider offline')).mockResolvedValueOnce(movie);
   const { result } = renderHook(() => useLibraryMedia([item], { enabled: true, userId: 'one' }));

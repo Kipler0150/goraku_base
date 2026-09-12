@@ -8,6 +8,7 @@ import {
   assertSafeResponse,
   assertDedicatedTestDatabase,
   createMigratedSchema,
+  createTestEmailDelivery,
   dropTestSchema,
   sessionCookieValue,
   testDatabaseUrl
@@ -20,9 +21,26 @@ function cookieToken(cookie) {
   return cookie.slice('goraku_session='.length);
 }
 
-function assertPublicUser(response, expectedEmail) {
-  assert.deepEqual(Object.keys(response.body).sort(), ['email', 'id']);
+function assertPublicUser(response, expectedEmail, expectedUsername) {
+  assert.deepEqual(Object.keys(response.body).sort(), ['avatarUpdatedAt', 'email', 'id', 'username']);
   assert.equal(response.body.email, expectedEmail);
+  assert.equal(response.body.username, expectedUsername);
+}
+
+async function registerVerified(app, emailDelivery, { username, email }) {
+  const registration = await request(app)
+    .post('/api/auth/register')
+    .set('Origin', APP_ORIGIN)
+    .send({ username, email, password: TEST_PASSWORD });
+  assert.equal(registration.status, 202);
+  assertSafeResponse(registration);
+  assert.equal(registration.body.code, 'EMAIL_VERIFICATION_REQUIRED');
+  const token = emailDelivery.verificationTokens.get(email.trim().toLowerCase());
+  assert.ok(token);
+  const verification = await request(app).get(`/api/auth/verify-email?token=${encodeURIComponent(token)}`);
+  assert.equal(verification.status, 303);
+  assertSafeResponse(verification);
+  return sessionCookieValue(verification);
 }
 
 describe('PostgreSQL authentication HTTP API', () => {
@@ -30,12 +48,14 @@ describe('PostgreSQL authentication HTTP API', () => {
   let schemaPool;
   let schemaName;
   let app;
+  let emailDelivery;
 
   before(async () => {
     assertDedicatedTestDatabase(testDatabaseUrl);
     pool = createDatabasePool({ databaseUrl: testDatabaseUrl });
     ({ schemaName, schemaPool } = await createMigratedSchema(pool, 'auth_http_test'));
-    app = createApp({ databasePool: schemaPool, appOrigin: APP_ORIGIN });
+    emailDelivery = createTestEmailDelivery();
+    app = createApp({ databasePool: schemaPool, appOrigin: APP_ORIGIN, emailDelivery });
   });
 
   after(async () => {
@@ -45,40 +65,29 @@ describe('PostgreSQL authentication HTTP API', () => {
     }
   });
 
-  it('registers and restores a normalized User without exposing persistence secrets', async () => {
-    const registration = await request(app)
-      .post('/api/auth/register')
-      .set('Origin', APP_ORIGIN)
-      .send({ email: '  Http.User@Example.COM ', password: TEST_PASSWORD });
-
-    assert.equal(registration.status, 201);
-    assert.equal(registration.headers.location, '/api/auth/me');
-    assertSafeResponse(registration);
-    assertPublicUser(registration, 'http.user@example.com');
-    const cookie = sessionCookieValue(registration);
+  it('registers a pending User, verifies its email, and restores it without exposing persistence secrets', async () => {
+    const cookie = await registerVerified(app, emailDelivery, { username: 'HttpReader', email: '  Http.User@Example.COM ' });
     assert.match(cookie, /^goraku_session=[A-Za-z0-9_-]{43}$/);
-    assert.match(registration.headers['set-cookie'][0], /Max-Age=604800/);
-    assert.match(registration.headers['set-cookie'][0], /HttpOnly/);
-    assert.match(registration.headers['set-cookie'][0], /SameSite=Lax/);
 
     const currentUser = await request(app)
       .get('/api/auth/me')
       .set('Cookie', cookie);
     assert.equal(currentUser.status, 200);
     assertSafeResponse(currentUser);
-    assertPublicUser(currentUser, 'http.user@example.com');
+    assertPublicUser(currentUser, 'http.user@example.com', 'httpreader');
   });
 
   it('enforces Origin validation and generic credential failures over HTTP', async () => {
     const suffix = `${process.pid}-${Date.now()}`;
     const email = `origin-${suffix}@example.com`;
+    const username = `origin_${suffix.replace('-', '_')}`;
     const missingOrigin = await request(app)
       .post('/api/auth/register')
-      .send({ email, password: TEST_PASSWORD });
+      .send({ username, email, password: TEST_PASSWORD });
     const wrongOrigin = await request(app)
       .post('/api/auth/register')
       .set('Origin', 'https://attacker.example')
-      .send({ email, password: TEST_PASSWORD });
+      .send({ username, email, password: TEST_PASSWORD });
 
     assert.equal(missingOrigin.status, 403);
     assert.equal(wrongOrigin.status, 403);
@@ -95,14 +104,14 @@ describe('PostgreSQL authentication HTTP API', () => {
     const registration = await request(app)
       .post('/api/auth/register')
       .set('Origin', APP_ORIGIN)
-      .send({ email, password: TEST_PASSWORD });
-    assert.equal(registration.status, 201);
+      .send({ username, email, password: TEST_PASSWORD });
+    assert.equal(registration.status, 202);
     assertSafeResponse(registration);
 
     const duplicate = await request(app)
       .post('/api/auth/register')
       .set('Origin', APP_ORIGIN)
-      .send({ email: email.toUpperCase(), password: TEST_PASSWORD });
+      .send({ username, email: email.toUpperCase(), password: TEST_PASSWORD });
     const invalidLogin = await request(app)
       .post('/api/auth/login')
       .set('Origin', APP_ORIGIN)
@@ -122,7 +131,7 @@ describe('PostgreSQL authentication HTTP API', () => {
     assert.deepEqual(invalidLogin.body, {
       error: {
         code: 'INVALID_CREDENTIALS',
-        message: 'The email or password is invalid.',
+        message: 'The email, username, or password is invalid.',
         details: []
       }
     });
@@ -131,16 +140,12 @@ describe('PostgreSQL authentication HTTP API', () => {
   it('creates concurrent Sessions, revokes only one, and lazily removes an expired Session', async () => {
     const suffix = `${process.pid}-${Date.now()}`;
     const email = `sessions-${suffix}@example.com`;
-    const registration = await request(app)
-      .post('/api/auth/register')
-      .set('Origin', APP_ORIGIN)
-      .send({ email, password: TEST_PASSWORD });
-    assertSafeResponse(registration);
-    const firstCookie = sessionCookieValue(registration);
+    const username = `sessions_${suffix.replace('-', '_')}`;
+    const firstCookie = await registerVerified(app, emailDelivery, { username, email });
     const secondLogin = await request(app)
       .post('/api/auth/login')
       .set('Origin', APP_ORIGIN)
-      .send({ email: email.toUpperCase(), password: TEST_PASSWORD });
+      .send({ identifier: username.toUpperCase(), password: TEST_PASSWORD });
     assertSafeResponse(secondLogin);
     const secondCookie = sessionCookieValue(secondLogin);
 

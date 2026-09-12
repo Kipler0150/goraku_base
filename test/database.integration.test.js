@@ -24,7 +24,7 @@ describe('PostgreSQL migrations', () => {
       schemaCreated = true;
 
       const firstRun = await runMigrations({ pool, schema: schemaName });
-      assert.deepEqual(firstRun.applied, ['001_initial_schema', '002_tracking_schema']);
+      assert.deepEqual(firstRun.applied, ['001_initial_schema', '002_tracking_schema', '003_username_schema', '004_episode_tracking', '005_profile_avatar', '006_verified_email_auth']);
 
       const secondRun = await runMigrations({ pool, schema: schemaName });
       assert.deepEqual(secondRun.applied, []);
@@ -37,8 +37,10 @@ describe('PostgreSQL migrations', () => {
       `, [schemaName]);
       assert.deepEqual(tables.rows.map((row) => row.table_name), [
         'auth_identities',
+        'auth_tokens',
         'collections',
         'library_item_collections',
+        'library_item_episodes',
         'library_item_tags',
         'library_items',
         'local_credentials',
@@ -61,9 +63,23 @@ describe('PostgreSQL migrations', () => {
       }
       assert.deepEqual(columnsByTable.get('users'), [
         'id:NO:uuid',
+        'username:NO:text',
         'email:NO:text',
         'created_at:NO:timestamp with time zone',
-        'updated_at:NO:timestamp with time zone'
+        'updated_at:NO:timestamp with time zone',
+        'avatar_data:YES:bytea',
+        'avatar_content_type:YES:text',
+        'avatar_updated_at:YES:timestamp with time zone',
+        'email_verified_at:YES:timestamp with time zone'
+      ]);
+      assert.deepEqual(columnsByTable.get('auth_tokens'), [
+        'id:NO:uuid',
+        'user_id:NO:uuid',
+        'purpose:NO:text',
+        'token_hash:NO:text',
+        'expires_at:NO:timestamp with time zone',
+        'consumed_at:YES:timestamp with time zone',
+        'created_at:NO:timestamp with time zone'
       ]);
       assert.deepEqual(columnsByTable.get('library_items'), [
         'id:NO:uuid',
@@ -164,7 +180,7 @@ describe('PostgreSQL migrations', () => {
       const upgradedPool = await pool.connect();
       try {
         await upgradedPool.query(`SET search_path TO ${quoteSchemaIdentifier(schemaName)}, public`);
-        const user = await upgradedPool.query("INSERT INTO users (email) VALUES ('phase5-row@example.com') RETURNING id");
+        const user = await upgradedPool.query("INSERT INTO users (username, email) VALUES ('phase5_row', 'phase5-row@example.com') RETURNING id");
         await upgradedPool.query(`
           INSERT INTO library_items (user_id, provider, type, provider_id)
           VALUES ($1, 'tmdb', 'MOVIE', 'phase5-row')
@@ -173,7 +189,13 @@ describe('PostgreSQL migrations', () => {
         upgradedPool.release();
       }
 
-      assert.deepEqual((await runMigrations({ pool, schema: schemaName })).applied, ['002_tracking_schema']);
+      assert.deepEqual((await runMigrations({ pool, schema: schemaName })).applied, [
+        '002_tracking_schema',
+        '003_username_schema',
+        '004_episode_tracking',
+        '005_profile_avatar',
+        '006_verified_email_auth'
+      ]);
       const existing = await pool.query(`
         SELECT personal_rating, note, progress
         FROM ${quoteSchemaIdentifier(schemaName)}.library_items
@@ -211,8 +233,8 @@ describe('PostgreSQL migrations', () => {
       try {
         await client.query(`SET search_path TO ${quoteSchemaIdentifier(schemaName)}, public`);
         const users = await client.query(`
-          INSERT INTO users (email)
-          VALUES ('tracking-owner@example.com'), ('tracking-other@example.com')
+          INSERT INTO users (username, email)
+          VALUES ('tracking_owner', 'tracking-owner@example.com'), ('tracking_other', 'tracking-other@example.com')
           RETURNING id, email
         `);
         const ownerId = users.rows.find((row) => row.email === 'tracking-owner@example.com').id;

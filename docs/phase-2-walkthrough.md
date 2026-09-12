@@ -6,8 +6,8 @@ This guide explains the completed anime search slice as it exists in the reposit
 
 - An accessible React search surface with debounce, cancellation, loading, empty, success, error, retry, and pagination states.
 - An Express boundary at `GET /api/media/search` with strict validation and safe error envelopes.
-- A server-side AniList adapter that normalizes anime results into the shared `Media` contract.
-- An optional server-side MyAnimeList adapter used only when AniList is classified as unavailable.
+- A server-side MyAnimeList adapter that normalizes anime results into the shared `Media` contract.
+- An AniList adapter used only when MyAnimeList is classified as unavailable.
 - Deterministic adapter, HTTP, and client tests that use fixtures instead of live provider calls.
 
 The browser never calls AniList or MyAnimeList directly. It sends relative `/api` requests to Express, and the server owns provider credentials, request timeouts, normalization, fallback policy, and safe errors.
@@ -23,7 +23,7 @@ npm run dev
 
 Open <http://localhost:5173>. The combined development command starts Express on port 3001 and Vite on port 5173. Vite proxies the browser's relative `/api` requests to Express.
 
-The normal test suite needs no provider credential and makes no live provider request. The optional fallback can be enabled for a local manual run by adding the server-only variable to the root `.env.local` file or setting it before starting Express:
+The normal test suite needs no provider credential and makes no live provider request. MyAnimeList can be enabled for a local manual run by adding the server-only variable to the root `.env.local` file or setting it before starting Express:
 
 ```text
 MAL_CLIENT_ID=your-myanimelist-client-id
@@ -31,7 +31,7 @@ MAL_CLIENT_ID=your-myanimelist-client-id
 
 The server loads `.env.local` at startup when it exists; shell values take precedence. Restart `npm run dev` after changing the file.
 
-AniList requires no credential for this read-only slice. MyAnimeList requires only `MAL_CLIENT_ID`; user OAuth, a client secret, redirect URLs, and user library access are out of scope. Never expose the value to the client.
+MyAnimeList requires only `MAL_CLIENT_ID`; AniList requires no credential for the availability fallback. User OAuth, a client secret, redirect URLs, and user library access are out of scope. Never expose the value to the client.
 
 ## Request flow
 
@@ -41,16 +41,16 @@ React search form
   -> GET /api/media/search
   -> server/app.js validates the request
   -> server/media-search.js selects one provider page
-  -> server/providers/anilist.js (primary)
-       or server/providers/myanimelist.js (availability fallback)
+  -> server/providers/myanimelist.js (primary)
+       or server/providers/anilist.js (availability fallback)
   -> shared/media.js creates normalized Media values
   -> JSON response with source, pagination, and providerErrors
   -> React hook updates the visible search state
 ```
 
-AniList is attempted first when no `provider` hint is present. MyAnimeList is attempted only when AniList returns `PROVIDER_UNAVAILABLE` and `MAL_CLIENT_ID` is configured. A timeout, rate limit, malformed response, generic provider error, or valid empty AniList result does not activate fallback.
+MyAnimeList is attempted first when no `provider` hint is present. AniList is attempted only when MyAnimeList returns `PROVIDER_UNAVAILABLE`. A timeout, rate limit, malformed response, generic provider error, or valid empty MyAnimeList result does not activate fallback.
 
-The API never merges results from the two providers. A successful fallback response identifies its owner with `source: "myanimelist"` and records the safe AniList failure in `providerErrors`. Later pages send `provider=myanimelist`, so a single query cannot silently switch providers. If both attempted providers fail, the API returns `503 PROVIDERS_UNAVAILABLE` without upstream diagnostics.
+The API never merges results from the two providers. A successful fallback response identifies its owner with `source: "anilist"` and records the safe MyAnimeList failure in `providerErrors`. Later pages send `provider=anilist`, so a single query cannot silently switch providers. If both attempted providers fail, the API returns `503 PROVIDERS_UNAVAILABLE` without upstream diagnostics.
 
 ## Search contract
 
@@ -73,7 +73,7 @@ A successful response has this shape:
 ```json
 {
   "results": [],
-  "source": "anilist",
+  "source": "myanimelist",
   "pagination": { "page": 1, "perPage": 12, "hasMore": false },
   "providerErrors": []
 }
@@ -85,7 +85,7 @@ Provider and internal failures use safe messages and an empty `details` array. T
 
 ## Adult-content behavior
 
-`includeAdult=true` is the default for this temporary phase. The native checkbox is local-only: changing it resets pagination and reruns the current query. AniList receives the preference at its provider boundary; MyAnimeList filters explicit entries after normalization when it is serving the fallback page.
+`includeAdult=true` is the default for this temporary phase. The native checkbox is local-only: changing it resets pagination and reruns the current query. MyAnimeList filters explicit entries after normalization; AniList also receives the preference at its provider boundary when it is serving the fallback page.
 
 The normalized `Media` value preserves `isAdult` as `true`, `false`, or `null`. This is not a user preference and is not persisted. A future account-backed Content Visibility Preference can replace this temporary control without putting account state into the provider adapter.
 

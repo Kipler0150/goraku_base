@@ -11,13 +11,14 @@ export const MEDIA_CACHE_TTL_MS = Object.freeze({
   popular: 60_000,
   discovery: 60_000,
   details: 300_000,
-  recommendations: 300_000
+  recommendations: 300_000,
+  episodes: 300_000
 });
 
 const CACHEABLE_PROVIDER_OPERATIONS = Object.freeze({
-  anilist: ['search', 'details', 'trending', 'popular', 'recommendations'],
-  myanimelist: ['search', 'details', 'popular', 'recommendations'],
-  tmdb: ['search', 'details', 'trending', 'popular', 'recommendations'],
+  anilist: ['search', 'details', 'trending', 'popular', 'recommendations', 'episodes'],
+  myanimelist: ['search', 'details', 'trending', 'popular', 'latest', 'recommendations', 'episodes'],
+  tmdb: ['search', 'details', 'trending', 'popular', 'recommendations', 'episodes'],
   thegamesdb: ['search', 'details'],
   rawg: ['search', 'details', 'popular', 'recommendations']
 });
@@ -131,7 +132,7 @@ function evaluateCachePolicy(policy, context, value, { checkResponse = false } =
 
   if (checkResponse) {
     const requiresAttribution = policy.requiresAttribution ?? policy.attributionRequired ?? true;
-    const attributed = context.operation === 'details'
+    const attributed = ['details', 'episodes'].includes(context.operation)
       ? value?.provider === context.provider
       : value?.source === context.provider;
     if (requiresAttribution && !attributed) return null;
@@ -177,12 +178,38 @@ function isSafeListResponse(value) {
   });
 }
 
+const EPISODE_RESPONSE_FIELDS = new Set(['provider', 'providerId', 'type', 'season', 'episodes']);
+const EPISODE_FIELDS = new Set(['number', 'title', 'airDate', 'runtimeMinutes', 'image']);
+
+function isSafeEpisodeResponse(value) {
+  const expectedType = value?.provider === 'tmdb' ? 'TV' : ['anilist', 'myanimelist'].includes(value?.provider) ? 'ANIME' : null;
+  if (!hasOnlyFields(value, EPISODE_RESPONSE_FIELDS) ||
+      !expectedType || value.type !== expectedType ||
+      typeof value.providerId !== 'string' || !/^[1-9]\d*$/.test(value.providerId) ||
+      !Number.isInteger(value.season) || value.season < 1 ||
+      !Array.isArray(value.episodes) || canonicalize(value, { response: true }) === null) return false;
+  return value.episodes.every((episode) => (
+    hasOnlyFields(episode, EPISODE_FIELDS)
+    && Number.isInteger(episode.number)
+    && episode.number >= 1
+    && (episode.title === null || typeof episode.title === 'string')
+    && (episode.airDate === null || (isPlainObject(episode.airDate) &&
+      Number.isInteger(episode.airDate.year) && episode.airDate.year >= 1 &&
+      (episode.airDate.month === null || (Number.isInteger(episode.airDate.month) && episode.airDate.month >= 1 && episode.airDate.month <= 12)) &&
+      (episode.airDate.day === null || (Number.isInteger(episode.airDate.day) && episode.airDate.day >= 1 && episode.airDate.day <= 31))))
+    && (episode.runtimeMinutes === null || (Number.isInteger(episode.runtimeMinutes) && episode.runtimeMinutes >= 0))
+    && (episode.image === null || typeof episode.image === 'string')
+  ));
+}
+
 function isSafeResponse(value, operation) {
-  return operation === 'details' ? isNormalizedMedia(value) : isSafeListResponse(value);
+  if (operation === 'details') return isNormalizedMedia(value);
+  if (operation === 'episodes') return isSafeEpisodeResponse(value);
+  return isSafeListResponse(value);
 }
 
 function responseProviderForCache(context, value) {
-  const responseProvider = context.operation === 'details' ? value?.provider : value?.source;
+  const responseProvider = ['details', 'episodes'].includes(context.operation) ? value?.provider : value?.source;
   if (typeof responseProvider !== 'string' || !responseProvider) return null;
   if (responseProvider === context.provider) return responseProvider;
 
