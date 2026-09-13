@@ -82,7 +82,7 @@ Create a new **Web Service** from the GitHub repository with these settings:
 | Root Directory | repository root |
 | Runtime | Node |
 | Plan | Free |
-| Build Command | `npm ci && npm run build` |
+| Build Command | `npm ci --include=dev && npm run build` |
 | Start Command | `npm start` |
 | Health Check Path | `/api/health` |
 

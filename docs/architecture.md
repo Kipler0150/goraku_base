@@ -10,7 +10,7 @@ Keep React, JavaScript, CSS, Node.js with Express, and PostgreSQL. Develop local
 
 ## Deployment boundary
 
-The initial live deployment keeps the React client and Express API on one same-origin Render Web Service. The service runs `npm ci && npm run build` during deployment, serves the resulting `client/dist` files, and starts with `npm start`; the existing relative `/api` client contract therefore remains unchanged. Neon owns the fresh production PostgreSQL database, including User-owned Library Items and private profile pictures. Brevo is called through its HTTPS API for verified-email and password-recovery messages.
+The initial live deployment keeps the React client and Express API on one same-origin Render Web Service. The service runs `npm ci --include=dev && npm run build` during deployment, serves the resulting `client/dist` files, and starts with `npm start`; the existing relative `/api` client contract therefore remains unchanged. The explicit dev-dependency inclusion is required because the production `NODE_ENV` would otherwise cause npm to omit Vite before the client build. Neon owns the fresh production PostgreSQL database, including User-owned Library Items and private profile pictures. Brevo is called through its HTTPS API for verified-email and password-recovery messages.
 
 The free boundary intentionally accepts Render cold starts, shared monthly runtime limits, and ephemeral service files. No User-owned data or uploaded profile picture may depend on the Render filesystem. The complete setup, secrets, migration, smoke-test, and manual backup procedure is in [the Render + Neon deployment guide](deployment-render-neon.md).
 

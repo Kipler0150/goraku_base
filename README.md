@@ -77,6 +77,7 @@ Additional media types/providers, production hardening, and deployment remain fu
 
 ## Documentation
 
+- [Application user guide](docs/user-guide.md)
 - [Architecture, REST contract, and phased plan](docs/architecture.md)
 - [Domain glossary](CONTEXT.md)
 - [Phase 1 learning walkthrough](docs/phase-1-walkthrough.md)
