@@ -2,6 +2,13 @@
 
 This guide deploys Goraku Base as a no-budget public beta using one Render Hobby Web Service and one Neon Free PostgreSQL project. The deployment keeps the React client and Express API on the same origin, so browser requests continue to use relative `/api` routes and authenticated Session cookies do not need cross-origin configuration.
 
+## Current rollout status
+
+- Repository preparation is complete in commit `721239c`.
+- The approved `master` branch has been pushed to `https://github.com/Kipler0150/goraku_base.git`.
+- Neon production project creation and migration are pending.
+- Render Web Service creation and the live smoke test are pending.
+
 ## Free-tier boundary
 
 This setup is intentionally limited to free plans. Render Free Web Services can sleep after inactivity, restart, and lose local filesystem changes. Render's free service also shares monthly runtime and bandwidth limits. Neon is the persistent production data store; do not use Render Free Postgres because that plan expires after 30 days. Brevo uses its HTTPS API, not SMTP, because Render Free blocks outbound SMTP ports.
@@ -64,7 +71,7 @@ npm run check
 git push origin master
 ```
 
-Render should deploy from `master` and automatically redeploy after future pushes.
+The initial deployment commit has already been pushed. Render should deploy from `master` and automatically redeploy after future pushes.
 
 ## 3. Create the Render Web Service
 

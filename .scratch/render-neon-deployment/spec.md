@@ -25,7 +25,7 @@ Deploy the current Goraku Base React/Vite client and Node/Express API as one sam
 - [x] Render build, start, and health-check settings are documented.
 - [x] Neon creation, fresh migration, secret handling, smoke tests, backup, and rollback boundaries are documented.
 - [ ] A fresh Neon database has all migrations applied.
-- [ ] The `master` branch is pushed to GitHub without secrets.
+- [x] The `master` branch is pushed to GitHub without secrets.
 - [ ] Render Web Service deploys successfully on the Free plan.
 - [ ] `APP_ORIGIN` matches the deployed Render HTTPS origin.
 - [ ] Brevo verification and password reset work from the deployed origin.
@@ -34,7 +34,7 @@ Deploy the current Goraku Base React/Vite client and Node/Express API as one sam
 
 ## Verification record
 
-The production-serving seam was verified by the HTTP test suite. External Neon, Render, and Brevo checks remain pending until the services are provisioned.
+The production-serving seam was verified by the HTTP test suite. Commit `721239c` was pushed to the configured GitHub `master` branch. External Neon, Render, and Brevo checks remain pending until the services are provisioned.
 
 ## Comments
 
