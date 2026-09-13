@@ -453,6 +453,7 @@ export function createApp({
   libraryRepository = databasePool ? createLibraryRepository({ pool: databasePool }) : null,
   tagsCollectionsRepository = databasePool ? createTagsCollectionsRepository({ pool: databasePool }) : null,
   secureCookies = process.env.NODE_ENV === 'production',
+  clientDistDirectory = null,
   trustProxy = undefined,
   rateLimit = {},
   rateLimiter = null,
@@ -777,6 +778,20 @@ export function createApp({
   if (enableTestErrorRoute) {
     app.get('/api/test/unexpected', () => {
       throw new Error('intentional test failure with diagnostic details');
+    });
+  }
+
+  if (clientDistDirectory) {
+    app.use(express.static(clientDistDirectory));
+    app.use((request, response, next) => {
+      if (!['GET', 'HEAD'].includes(request.method) || request.path.startsWith('/api')) {
+        next();
+        return;
+      }
+
+      response.sendFile('index.html', { root: clientDistDirectory }, (error) => {
+        if (error) next(error);
+      });
     });
   }
 
