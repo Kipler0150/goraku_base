@@ -6,6 +6,7 @@ export const RAWG_ENDPOINT = 'https://api.rawg.io/api/games';
 export const RAWG_DETAILS_ENDPOINT = RAWG_ENDPOINT;
 export const RAWG_TIMEOUT_MS = 5_000;
 export const RAWG_PAGE_SIZE = 20;
+export const RAWG_LATEST_LOOKBACK_DAYS = 365;
 
 const ERROR_MESSAGES = Object.freeze({
   [PROVIDER_ERROR_CODES.TIMEOUT]: 'RAWG did not respond within the allowed time.',
@@ -15,6 +16,8 @@ const ERROR_MESSAGES = Object.freeze({
   [PROVIDER_ERROR_CODES.NOT_FOUND]: 'RAWG media was not found.',
   [PROVIDER_ERROR_CODES.ERROR]: 'RAWG request failed.'
 });
+
+const TRANSLATED_DESCRIPTION_MARKER = /(?:^|\n)\s*(?:Español|Spanish|Deutsch|German|Français|French|Italiano|Italian|Português|Portuguese|Nederlands|Dutch|Polski|Polish|Русский|Russian|日本語|中文|한국어|Korean)\b/i;
 
 function providerError(code) {
   return new ProviderError(code, ERROR_MESSAGES[code]);
@@ -52,7 +55,7 @@ function normalizeDescription(value) {
   const description = nullableString(value);
   if (description == null) return null;
 
-  return description
+  const normalized = description
     .replace(/<!--[\s\S]*?-->/g, '')
     .replace(/<br\s*\/?\s*>/gi, '\n')
     .replace(/<\/(?:p|div|li|h[1-6]|blockquote)>/gi, '\n')
@@ -64,6 +67,10 @@ function normalizeDescription(value) {
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim() || null;
+
+  if (normalized == null) return null;
+  const translatedSection = TRANSLATED_DESCRIPTION_MARKER.exec(normalized);
+  return (translatedSection ? normalized.slice(0, translatedSection.index) : normalized).trim() || null;
 }
 
 function normalizeProviderId(value) {
@@ -102,6 +109,17 @@ function normalizeReleaseStatus(value) {
   if (value == null) return 'UNKNOWN';
   if (typeof value !== 'boolean') throw invalidResponse();
   return value ? 'ANNOUNCED' : 'UNKNOWN';
+}
+
+function formatUtcDate(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function latestReleaseDateRange(now = new Date()) {
+  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const start = new Date(end);
+  start.setUTCDate(start.getUTCDate() - RAWG_LATEST_LOOKBACK_DAYS);
+  return `${formatUtcDate(start)},${formatUtcDate(end)}`;
 }
 
 function normalizeResult(value) {
@@ -344,6 +362,7 @@ export function createRAWGAdapter({
       const url = new URL(endpoint);
       url.searchParams.set('key', normalizedKey);
       url.searchParams.set('ordering', '-released');
+      url.searchParams.set('dates', latestReleaseDateRange());
       url.searchParams.set('page', String(page));
       url.searchParams.set('page_size', String(perPage));
       const payload = await requestProviderJson({

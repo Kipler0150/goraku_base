@@ -80,6 +80,25 @@ describe('RAWG adapter', () => {
     });
   });
 
+  it('keeps the English section when RAWG appends translated descriptions', async () => {
+    const adapter = createRAWGAdapter({
+      apiKey: 'fixture-rawg-key',
+      request: async () => response({
+        count: 1,
+        next: null,
+        results: [{
+          id: 3498,
+          name: 'Grand Theft Auto V',
+          description_raw: '<p>Rockstar Games went bigger with a sprawling open-world crime story.</p>\n<p>Español Rockstar Games se hizo más grande con una historia criminal de mundo abierto.</p>'
+        }]
+      })
+    });
+
+    const result = await adapter.searchMedia({ query: 'grand theft auto' });
+
+    assert.equal(result.results[0].description, 'Rockstar Games went bigger with a sprawling open-world crime story.');
+  });
+
   it('preserves sparse fields, maps TBA, filters explicit Adults Only entries, and does not slice pages', async () => {
     const payload = {
       count: 3,

@@ -67,6 +67,10 @@ function formatPrimaryCreators(creators) {
   return uniqueCreators.length > 0 ? uniqueCreators.map((creator) => creator.name).join(', ') : 'Creators unavailable';
 }
 
+function hasCreatorMetadata(creators) {
+  return Array.isArray(creators) && creators.some((creator) => creator && typeof creator.name === 'string' && creator.name.trim());
+}
+
 function formatCardReleaseDate(releaseDate) {
   if (!releaseDate?.year) return 'Release date unavailable';
   if (!releaseDate.month) return String(releaseDate.year);
@@ -809,6 +813,10 @@ const DISCOVERY_SHELVES = Object.freeze({
     { key: 'trending', label: 'Trending this week', operation: 'trending' },
     { key: 'latest', label: 'Latest releases', operation: 'latest' }
   ]),
+  game: Object.freeze([
+    { key: 'popular', label: 'Popular', operation: 'popular' },
+    { key: 'latest', label: 'Latest releases', operation: 'latest' }
+  ]),
   anime: Object.freeze([
     { key: 'popular', label: 'Popular now', operation: 'popular' },
     { key: 'trending', label: 'Currently airing', operation: 'trending' },
@@ -817,14 +825,19 @@ const DISCOVERY_SHELVES = Object.freeze({
 });
 
 function getDiscoveryShelves(type) {
-  return type === 'anime' ? DISCOVERY_SHELVES.anime : DISCOVERY_SHELVES.default;
+  if (type === 'anime') return DISCOVERY_SHELVES.anime;
+  if (type === 'game') return DISCOVERY_SHELVES.game;
+  return DISCOVERY_SHELVES.default;
 }
 
 function DiscoveryHero({ media, type, onViewDetails }) {
   const typeLabel = getMediaTypeLabel(type);
   const shelfDescription = type === 'anime'
     ? 'popular, currently airing, and seasonal releases'
-    : 'popular, trending, and latest releases';
+    : type === 'game'
+      ? 'popular and latest releases'
+      : 'popular, trending, and latest releases';
+  const popularLabel = getDiscoveryShelves(type).find((shelf) => shelf.key === 'popular')?.label ?? 'Popular now';
   if (!media) {
     return (
       <section className="discovery-hero discovery-hero--empty" aria-label="Discover feature">
@@ -850,7 +863,7 @@ function DiscoveryHero({ media, type, onViewDetails }) {
           <MediaCardRating providerRating={media.providerRating} />
           <span>{formatCardReleaseDate(media.releaseDate)}</span>
         </div>
-        <p>Selected from Popular now in the {typeLabel.toLowerCase()} catalog.</p>
+        <p>Selected from {popularLabel} in the {typeLabel.toLowerCase()} catalog.</p>
         <button type="button" className="search-action search-action--primary" onClick={() => onViewDetails(media)}>
           Open details <ArrowIcon />
         </button>
@@ -946,13 +959,12 @@ function DiscoverWorkspace({ active, includeAdult, user, library, onSave, onRequ
   const latest = useMediaDiscovery({ includeAdult });
   const featured = popular.state.results[0] ?? trending.state.results[0] ?? null;
   const shelves = getDiscoveryShelves(type);
+  const discoveryByShelf = { popular, trending, latest };
 
   useEffect(() => {
     if (!active) return undefined;
     const timer = window.setTimeout(() => {
-      popular.load({ operation: 'popular', type });
-      trending.load({ operation: 'trending', type });
-      latest.load({ operation: 'latest', type });
+      shelves.forEach((shelf) => discoveryByShelf[shelf.key].load({ operation: shelf.operation, type }));
     }, 0);
     return () => window.clearTimeout(timer);
   }, [active, type]);
@@ -988,11 +1000,11 @@ function DiscoverWorkspace({ active, includeAdult, user, library, onSave, onRequ
 
       <DiscoveryHero media={featured} type={type} onViewDetails={onViewDetails} />
       <div className="discovery-shelves">
-        {shelves.map((shelf, index) => (
+        {shelves.map((shelf) => (
           <DiscoveryShelf
             key={shelf.key}
             shelf={shelf}
-            discovery={[popular, trending, latest][index]}
+            discovery={discoveryByShelf[shelf.key]}
             type={type}
             user={user}
             library={library}
@@ -1006,30 +1018,34 @@ function DiscoverWorkspace({ active, includeAdult, user, library, onSave, onRequ
   );
 }
 
-function RecommendationResults({ recommendations, user, library, onSave, onRequestSignIn, onViewDetails }) {
-  const { state } = recommendations;
+function RecommendationResults({ recommendations, popularFallback, media, user, library, onSave, onRequestSignIn, onViewDetails }) {
+  const usePopularFallback = media?.type === 'GAME' && recommendations.state.status === 'error';
+  const displayed = usePopularFallback ? popularFallback : recommendations;
+  const { state } = displayed;
+  const title = usePopularFallback ? 'Popular games' : 'Recommendations';
 
   return (
-    <section className="recommendations-panel" role="region" aria-label="Recommendations" aria-busy={recommendations.isBusy}>
+    <section className="recommendations-panel" role="region" aria-label={title} aria-busy={displayed.isBusy}>
       <div className="recommendations-panel__heading">
         <div>
-          <h3>Recommendations</h3>
+          <h3>{title}</h3>
         </div>
       </div>
+      {usePopularFallback && <p className="recommendations-panel__fallback">Recommendations are unavailable, so popular games are shown instead.</p>}
       {state.status === 'loading' && state.results.length === 0 && <SearchSkeletons />}
-      {state.status === 'error' && <PublicMediaError error={state.error} onRetry={recommendations.retry} resource="Recommendations" />}
+      {state.status === 'error' && <PublicMediaError error={state.error} onRetry={displayed.retry} resource={title} />}
       {state.status === 'success' && state.results.length === 0 && (
         <SearchState>
           <span className="state-mark" aria-hidden="true">0</span>
-          <h3>No recommendations found.</h3>
-          <p>The provider returned no related titles.</p>
+          <h3>No {usePopularFallback ? 'popular games' : 'recommendations'} found.</h3>
+          <p>{usePopularFallback ? 'The provider returned no popular games.' : 'The provider returned no related titles.'}</p>
         </SearchState>
       )}
       {state.results.length > 0 && (
         <>
           <MediaGrid
             results={state.results}
-            label="Recommended media"
+            label={usePopularFallback ? 'Popular games' : 'Recommended media'}
             user={user}
             library={library}
             onSave={onSave}
@@ -1038,8 +1054,8 @@ function RecommendationResults({ recommendations, user, library, onSave, onReque
           />
           {state.pagination?.hasMore && (
             <div className="load-more-wrap">
-              <button type="button" className="search-action search-action--primary" onClick={recommendations.loadMore} disabled={recommendations.isBusy || state.status === 'error'}>
-                {recommendations.isBusy ? 'Loading more…' : 'Load more recommendations'}
+              <button type="button" className="search-action search-action--primary" onClick={displayed.loadMore} disabled={displayed.isBusy || state.status === 'error'}>
+                {displayed.isBusy ? 'Loading more…' : `Load more ${usePopularFallback ? 'popular games' : 'recommendations'}`}
               </button>
             </div>
           )}
@@ -1135,7 +1151,7 @@ function EpisodeTrackingSection({ media, user, library, libraryItem: providedLib
   );
 }
 
-function MediaDetailsPanel({ details, recommendations, user, library, onSave, onRequestSignIn, onBack, onViewDetails }) {
+function MediaDetailsPanel({ details, recommendations, popularFallback, user, library, onSave, onRequestSignIn, onBack, onViewDetails }) {
   const panelRef = useRef(null);
   const titleId = useId();
   const selectedMedia = details.selectedMedia;
@@ -1174,7 +1190,7 @@ function MediaDetailsPanel({ details, recommendations, user, library, onSave, on
               <dl className="details-facts">
                 <div><dt>Provider</dt><dd>{getProviderLabel(media.provider)}</dd></div>
                 <div><dt>Genres</dt><dd>{formatMetadataList(media.genres, 'Genres')}</dd></div>
-                <div><dt>Key creators</dt><dd>{formatPrimaryCreators(media.creators)}</dd></div>
+                {(media.type !== 'GAME' || hasCreatorMetadata(media.creators)) && <div><dt>Key creators</dt><dd>{formatPrimaryCreators(media.creators)}</dd></div>}
               </dl>
               <dl className="details-facts">
                 {getCardFacts(media).map(([label, value]) => (
@@ -1191,6 +1207,8 @@ function MediaDetailsPanel({ details, recommendations, user, library, onSave, on
           />
           <RecommendationResults
             recommendations={recommendations}
+            popularFallback={popularFallback}
+            media={media}
             user={user}
             library={library}
             onSave={onSave}
@@ -1425,19 +1443,28 @@ function MediaSearch({ user, library, onSave, onRequestSignIn, mode = 'search', 
   const search = useMediaSearch({ type: 'anime' });
   const details = useMediaDetails({ includeAdult: search.includeAdult });
   const recommendations = useMediaRecommendations({ includeAdult: search.includeAdult });
+  const popularFallback = useMediaDiscovery({ includeAdult: search.includeAdult });
   const typeLabel = getMediaTypeLabel(search.type);
 
   const openDetails = useCallback((media) => {
     if (details.status === 'idle') originRef.current = mediaIdentity(media);
+    popularFallback.clear();
     recommendations.load(media);
     details.open(media);
-  }, [details.open, details.status, recommendations.load]);
+  }, [details.open, details.status, popularFallback.clear, recommendations.load]);
 
   const backToResults = useCallback(() => {
     restoreFocusRef.current = true;
+    popularFallback.clear();
     recommendations.clear();
     details.close();
-  }, [details.close, recommendations.clear]);
+  }, [details.close, popularFallback.clear, recommendations.clear]);
+
+  useEffect(() => {
+    if (details.status !== 'success' || details.media?.type !== 'GAME' || recommendations.state.status !== 'error') return;
+    if (popularFallback.state.status !== 'initial') return;
+    popularFallback.load({ operation: 'popular', type: 'game', provider: 'rawg' });
+  }, [details.media?.type, details.status, popularFallback.load, popularFallback.state.status, recommendations.state.status]);
 
   useEffect(() => {
     if (details.status !== 'idle' || !restoreFocusRef.current) return;
@@ -1507,6 +1534,7 @@ function MediaSearch({ user, library, onSave, onRequestSignIn, mode = 'search', 
         <MediaDetailsPanel
           details={details}
           recommendations={recommendations}
+          popularFallback={popularFallback}
           user={user}
           library={library}
           onSave={onSave}

@@ -112,16 +112,19 @@ describe('media discovery HTTP API', () => {
     }]);
   });
 
-  it('uses the primary Provider only when discovery Provider is omitted', async () => {
+  it('uses RAWG for server-selected game discovery while keeping TheGamesDB out of discovery', async () => {
     const rawg = createDiscoveryAdapter({ result: { results: [game], pagination: { page: 1, perPage: 12, hasMore: false } } });
     const thegamesdb = { enabled: true, async getPopular() { throw new Error('must not be called'); } };
     const app = createApp({ rawgAdapter: rawg, thegamesdbAdapter: thegamesdb });
 
     const response = await request(app).get('/api/media/popular?type=game');
 
-    assert.equal(response.status, 501);
-    assert.equal(response.body.error.code, 'CAPABILITY_UNSUPPORTED');
-    assert.equal(rawg.calls.length, 0);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.source, 'rawg');
+    assert.deepEqual(rawg.calls, [{
+      operation: 'popular',
+      options: { provider: 'rawg', type: 'game', page: 1, perPage: 12, includeAdult: true }
+    }]);
   });
 
   it('falls back from unavailable MyAnimeList to AniList for server-selected Anime discovery', async () => {

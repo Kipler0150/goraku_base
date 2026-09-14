@@ -54,7 +54,8 @@ const SEARCH_QUERY_FIELDS = new Set(['type', 'q', 'page', 'perPage', 'includeAdu
 const MEDIA_DISCOVERY_QUERY_FIELDS = new Set(['type', 'page', 'perPage', 'includeAdult', 'provider']);
 const MEDIA_DETAIL_QUERY_FIELDS = new Set(['includeAdult']);
 const MEDIA_DETAIL_TYPES = new Set(['anime', 'movie', 'tv', 'game']);
-const DEFAULT_DISCOVERY_PROVIDERS = Object.freeze({ anime: 'myanimelist', movie: 'tmdb', tv: 'tmdb', game: 'thegamesdb' });
+const DEFAULT_SEARCH_PROVIDERS = Object.freeze({ anime: 'myanimelist', movie: 'tmdb', tv: 'tmdb', game: 'thegamesdb' });
+const DEFAULT_DISCOVERY_PROVIDERS = Object.freeze({ anime: 'myanimelist', movie: 'tmdb', tv: 'tmdb', game: 'rawg' });
 
 function validationError(details) {
   return {
@@ -585,7 +586,7 @@ export function createApp({
     }
 
     try {
-      const cacheProvider = validated.provider ?? DEFAULT_DISCOVERY_PROVIDERS[validated.type] ?? 'combined';
+      const cacheProvider = validated.provider ?? DEFAULT_SEARCH_PROVIDERS[validated.type] ?? 'combined';
       const result = await cachedMediaResponse({
         provider: cacheProvider,
         type: validated.type,

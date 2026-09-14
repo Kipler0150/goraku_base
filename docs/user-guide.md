@@ -30,10 +30,11 @@ The Goraku Base wordmark returns to Discover. The theme button switches between 
 
 Discover presents a featured title and curated shelves for the selected catalog. Choose Anime, Movies, TV, or Games from the catalog buttons.
 
-The shelves depend on the catalog:
+The shelves depend on the catalog and its configured Provider:
 
 - Anime: Popular now, Currently airing, and Seasonal releases.
-- Movies, TV, and Games: Popular now, Trending this week, and Latest releases.
+- Movies and TV: Popular now, Trending this week, and Latest releases.
+- Games: Popular and Latest releases use RAWG; the unsupported Trending shelf is hidden.
 
 Use the arrows beside a shelf to load more titles. Select a card to open its details. Discovery results are provider-curated; they are not ranked from your Library or treated as personalized recommendations.
 
@@ -93,9 +94,9 @@ To remove a bookmark, select the filled bookmark control or use Remove title in 
 
 ## Recommendations
 
-The details view may show Recommendations supplied by the title's provider. These are related titles returned for the selected title. They are not personalized from your Library, Tags, Collections, or ratings.
+The details view may show Recommendations supplied by the title's provider. These are related titles returned for the selected title. They are not personalized from your Library, Tags, Collections, or ratings. For Games, if RAWG cannot return related titles, the view clearly switches to a Popular games shelf from RAWG instead of leaving an unavailable panel.
 
-Use Load more recommendations when available. A provider may return no recommendations, may not support the operation, or may be temporarily unavailable.
+Use Load more recommendations when available. A provider may return no recommendations, may not support the operation, or may be temporarily unavailable. The Popular games fallback has its own pagination and retry state.
 
 ## Episode tracking
 
@@ -269,9 +270,11 @@ Goraku Base gathers media metadata from external providers and normalizes it for
 
 - Anime: MyAnimeList, with AniList availability fallback
 - Movies and TV: TMDB
-- Games: TheGamesDB, with RAWG availability fallback
+- Games: TheGamesDB for title search and details; RAWG for Discovery, filters, recommendations, and availability fallback
 
 Provider availability can change because of credentials, rate limits, outages, unsupported operations, or incomplete provider data. A provider error is different from a successful search with no matching titles. Use the relevant Retry action when one is shown.
+
+**A save action fails immediately in local development.** Open the client at `http://localhost:5173`. The API intentionally accepts mutations only from the configured `APP_ORIGIN`; Vite now fails instead of silently moving to port 5174 when port 5173 is already occupied. Stop the duplicate client process, restart the client, and use the displayed configured origin.
 
 Free hosting may also have a cold start after inactivity, so the first request can take longer than later requests.
 
@@ -328,4 +331,3 @@ Free hosting may also have a cold start after inactivity, so the first request c
 **The application seems slow on the first visit.** The free Render service may be waking from sleep. Wait briefly and retry.
 
 **A cover image is missing.** The provider did not return a usable image or the image host was temporarily unavailable. The Library view provides a retry action when artwork loading fails.
-

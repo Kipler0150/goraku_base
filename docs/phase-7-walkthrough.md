@@ -80,7 +80,7 @@ The Provider Capability matrix is the source of truth. It must identify whether 
 
 An unsupported capability is different from a successful empty result. The API returns 501 CAPABILITY_UNSUPPORTED for the former and a normal 200 list with no results for the latter. Temporary Provider, credential, timeout, malformed-response, and rate-limit failures retain the existing safe Provider Failure behavior.
 
-Provider selection is explicit for details and Recommendations. Discovery uses the type's primary Provider when omitted; server-selected Anime requests fall back from MyAnimeList to AniList only when MyAnimeList is unavailable. Anime search uses the same MyAnimeList-primary/AniList availability fallback; Anime Discovery uses MyAnimeList's popularity, airing, and current-season endpoints. All explicit Discovery, details, and Recommendation Provider selections remain strict.
+Provider selection is explicit for details and Recommendations. Discovery uses the type's curated Provider when omitted; server-selected Anime requests fall back from MyAnimeList to AniList only when MyAnimeList is unavailable. Anime search uses the same MyAnimeList-primary/AniList availability fallback; Anime Discovery uses MyAnimeList's popularity, airing, and current-season endpoints. Game title Search remains TheGamesDB-primary, while game Discovery and advanced filters use RAWG because TheGamesDB exposes neither popularity nor latest-release ordering. All explicit Discovery, details, and Recommendation Provider selections remain strict.
 
 ## API walkthrough
 

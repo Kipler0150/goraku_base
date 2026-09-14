@@ -8,7 +8,8 @@ The September 11 follow-up corrects the earlier horizontal-card and single-scrol
 ## Outcome
 
 - Compact Media cards in responsive vertical grids; the next rail arrow or horizontal end-of-rail scroll appends the next page automatically.
-- Discover uses a stacked shelf layout with catalog-specific labels. Anime shows Popular now, Currently airing, and Seasonal releases from MyAnimeList; other catalogs show Popular now, Trending this week, and Latest releases. Only Discover rails scroll horizontally; Search, Recommendations, and Library remain vertical.
+- Discover uses a stacked shelf layout with catalog-specific labels. Anime shows Popular now, Currently airing, and Seasonal releases from MyAnimeList; movies and TV show Popular now, Trending this week, and Latest releases; Games show Popular and Latest releases because no configured game Provider exposes trending. Only Discover rails scroll horizontally; Search, Recommendations, and Library remain vertical.
+- Game details hide the empty Key creators row, keep RAWG descriptions to the English section when translated sections are appended, and show Popular games from RAWG when provider Recommendations are unavailable.
 - Discover uses catalog buttons and a server-selected primary Provider, a featured fallback from the loaded shelves, desktop rail arrows, touch scrolling, and independent loading/error/unsupported states.
 - The featured hero switches to an image-backed, full-width copy layer at intermediate widths, while compact card metadata wraps release dates below ratings when space is tight. Catalog controls become icon-only below the compact breakpoint while retaining accessible labels.
 - Separate Discover, Search, My Library, and Account workspaces. Scroll position does not select a different workspace.

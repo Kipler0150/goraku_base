@@ -17,11 +17,27 @@ function response(body, status = 200) {
 
 describe('TheGamesDB adapter', () => {
   it('normalizes game results and sends the server-only API key', async () => {
-    let request;
+    const requests = [];
     const adapter = createTheGamesDBAdapter({
       apiKey: 'fixture-tgdb-key',
       request: async (url, options) => {
-        request = { url, options };
+        requests.push({ url, options });
+        if (url.pathname.endsWith('/Genres/ByGenreID')) {
+          return response({ data: { genres: {
+            '1': { id: 1, name: 'Action' },
+            '8': { id: 8, name: 'Platform' }
+          } } });
+        }
+        if (url.pathname.endsWith('/Developers/ByDeveloperID')) {
+          return response({ data: { developers: {
+            '1296': { id: 1296, name: 'Sonic Team' }
+          } } });
+        }
+        if (url.pathname.endsWith('/Publishers/ByPublisherID')) {
+          return response({ data: { publishers: {
+            '1': { id: 1, name: 'Sega' }
+          } } });
+        }
         return response({
           code: 200,
           status: 'Success',
@@ -53,22 +69,27 @@ describe('TheGamesDB adapter', () => {
     });
 
     const result = await adapter.searchMedia({ query: 'sonic', page: 2, perPage: 12, includeAdult: false });
-    const requestUrl = new URL(request.url);
+    const requestUrl = new URL(requests[0].url);
     assert.equal(requestUrl.origin + requestUrl.pathname, THEGAMESDB_ENDPOINT);
     assert.equal(requestUrl.searchParams.get('apikey'), 'fixture-tgdb-key');
     assert.equal(requestUrl.searchParams.get('name'), 'sonic');
     assert.equal(requestUrl.searchParams.get('page'), '2');
     assert.equal(requestUrl.searchParams.get('include'), 'boxart,platform');
-    assert.equal(request.options.headers.accept, 'application/json');
+    assert.equal(requests[0].options.headers.accept, 'application/json');
     assert.equal(result.results[0].provider, 'thegamesdb');
     assert.equal(result.results[0].id, 'thegamesdb:GAME:53');
     assert.equal(result.results[0].title, 'Sonic the Hedgehog');
     assert.equal(result.results[0].image, 'https://cdn.thegamesdb.net/images/original/boxart/front/53-1.jpg');
     assert.deepEqual(result.results[0].metadata, {
       platforms: ['Sega Genesis'],
-      developers: ['1296'],
-      publishers: ['1']
+      developers: ['Sonic Team'],
+      publishers: ['Sega']
     });
+    assert.deepEqual(requests.slice(1).map(({ url }) => new URL(url).pathname).sort(), [
+      '/v1/Developers/ByDeveloperID',
+      '/v1/Genres/ByGenreID',
+      '/v1/Publishers/ByPublisherID'
+    ]);
     assert.deepEqual(result.pagination, { page: 2, perPage: 20, hasMore: true });
   });
 

@@ -202,6 +202,7 @@ describe('Provider discovery adapters', () => {
     assert.equal(new URL(requests[0].url).pathname, '/api/games');
     assert.equal(new URL(requests[0].url).searchParams.get('ordering'), '-added');
     assert.equal(new URL(requests[1].url).searchParams.get('ordering'), '-released');
+    assert.match(new URL(requests[1].url).searchParams.get('dates'), /^\d{4}-\d{2}-\d{2},\d{4}-\d{2}-\d{2}$/);
     assert.equal(new URL(requests[2].url).pathname, '/api/games/3498/suggested');
     assert.equal(popular.results[0].metadata.platforms[0], 'PC');
     assert.equal(latest.results[0].provider, 'rawg');

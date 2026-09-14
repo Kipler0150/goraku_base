@@ -147,11 +147,20 @@ describe('Provider detail adapters', () => {
   });
 
   it('retrieves and normalizes a TheGamesDB detail without requiring search pagination', async () => {
-    let request;
+    const requests = [];
     const adapter = createTheGamesDBAdapter({
       apiKey: 'fixture-tgdb-key',
       request: async (url, options) => {
-        request = { url, options };
+        requests.push({ url, options });
+        if (url.pathname.endsWith('/Genres/ByGenreID')) {
+          return response({ data: { genres: { '1': { id: 1, name: 'Action' } } } });
+        }
+        if (url.pathname.endsWith('/Developers/ByDeveloperID')) {
+          return response({ data: { developers: { '1296': { id: 1296, name: 'Sonic Team' } } } });
+        }
+        if (url.pathname.endsWith('/Publishers/ByPublisherID')) {
+          return response({ data: { publishers: { '1': { id: 1, name: 'Sega' } } } });
+        }
         return response({
           code: 200,
           status: 'Success',
@@ -182,12 +191,15 @@ describe('Provider detail adapters', () => {
 
     const result = await adapter.getMediaDetails({ providerId: '53' });
 
-    const url = new URL(request.url);
+    const url = new URL(requests[0].url);
     assert.equal(url.pathname, '/v1/Games/ByGameID');
     assert.equal(url.searchParams.get('id'), '53');
     assert.equal(url.searchParams.get('apikey'), 'fixture-tgdb-key');
     assert.equal(result.image, 'https://cdn.example/front/53.jpg');
     assert.deepEqual(result.metadata.platforms, ['Sega Genesis']);
+    assert.deepEqual(result.genres, ['Action']);
+    assert.deepEqual(result.metadata.developers, ['Sonic Team']);
+    assert.deepEqual(result.metadata.publishers, ['Sega']);
   });
 
   it('retrieves and normalizes a RAWG detail', async () => {

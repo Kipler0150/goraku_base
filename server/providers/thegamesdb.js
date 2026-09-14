@@ -1,8 +1,12 @@
 import { createMedia } from '../../shared/media.js';
 import { ProviderError, PROVIDER_ERROR_CODES } from './errors.js';
+import { requestProviderJson } from './http.js';
 
 export const THEGAMESDB_ENDPOINT = 'https://api.thegamesdb.net/v1.1/Games/ByGameName';
 export const THEGAMESDB_DETAILS_ENDPOINT = 'https://api.thegamesdb.net/v1/Games/ByGameID';
+export const THEGAMESDB_GENRES_ENDPOINT = 'https://api.thegamesdb.net/v1/Genres/ByGenreID';
+export const THEGAMESDB_DEVELOPERS_ENDPOINT = 'https://api.thegamesdb.net/v1/Developers/ByDeveloperID';
+export const THEGAMESDB_PUBLISHERS_ENDPOINT = 'https://api.thegamesdb.net/v1/Publishers/ByPublisherID';
 export const THEGAMESDB_TIMEOUT_MS = 5_000;
 export const THEGAMESDB_PAGE_SIZE = 20;
 
@@ -64,15 +68,29 @@ function normalizeProviderId(value) {
   return String(value);
 }
 
-function normalizeNamedValues(value) {
+function normalizeLookupId(value) {
+  if (Number.isInteger(value) && value > 0) return String(value);
+  if (typeof value === 'string' && /^[1-9]\d*$/.test(value.trim())) return value.trim();
+  return null;
+}
+
+function normalizeNamedValues(value, lookupNames = null) {
   if (value == null) return [];
   if (!Array.isArray(value)) throw invalidResponse();
   return value.map((entry) => {
-    if (Number.isInteger(entry) && entry >= 0) return String(entry);
+    const lookupId = normalizeLookupId(entry);
+    if (lookupId) return lookupNames ? lookupNames.get(lookupId) ?? null : lookupId;
     if (typeof entry === 'string') return entry.trim();
     if (entry && typeof entry === 'object' && typeof entry.name === 'string') return entry.name.trim();
     throw invalidResponse();
   }).filter(Boolean);
+}
+
+function collectLookupIds(games, field) {
+  return [...new Set(games.flatMap((game) => {
+    if (!game || typeof game !== 'object' || !Array.isArray(game[field])) return [];
+    return game[field].map(normalizeLookupId).filter(Boolean);
+  }))];
 }
 
 function normalizePlatform(game, platformData) {
@@ -108,7 +126,7 @@ function normalizeAdultClassification(value) {
   return /(?:^|\b)(?:ao|adults?\s*only)(?:\b|$)/i.test(rating);
 }
 
-function normalizeResult(value, include) {
+function normalizeResult(value, include, lookupNames = {}) {
   const game = assertObject(value);
   const images = normalizeImage(game.id, include);
   try {
@@ -123,15 +141,15 @@ function normalizeResult(value, include) {
       image: images.image,
       bannerImage: images.bannerImage,
       releaseDate: normalizeDate(game.release_date),
-      genres: normalizeNamedValues(game.genres),
+      genres: normalizeNamedValues(game.genres, lookupNames.genres),
       providerRating: null,
       releaseStatus: game.release_date ? 'RELEASED' : 'UNKNOWN',
       creators: [],
       isAdult: normalizeAdultClassification(game.rating),
       metadata: {
         platforms: normalizePlatform(game, include?.platform?.data),
-        developers: normalizeNamedValues(game.developers),
-        publishers: normalizeNamedValues(game.publishers)
+        developers: normalizeNamedValues(game.developers, lookupNames.developers),
+        publishers: normalizeNamedValues(game.publishers, lookupNames.publishers)
       }
     });
   } catch (error) {
@@ -140,7 +158,59 @@ function normalizeResult(value, include) {
   }
 }
 
-function normalizePayload(payload, page, includeAdult) {
+function normalizeLookupPayload(payload, field) {
+  const root = assertObject(payload);
+  const data = assertObject(root.data);
+  const records = assertObject(data[field]);
+  const names = new Map();
+
+  for (const [key, value] of Object.entries(records)) {
+    const record = assertObject(value);
+    const id = normalizeLookupId(record.id ?? key);
+    const name = nullableString(record.name);
+    if (id && name) names.set(id, name);
+  }
+
+  return names;
+}
+
+async function resolveLookupNames({ games, field, endpoint, apiKey, request, timeoutMs, cache }) {
+  const ids = collectLookupIds(games, field);
+  const missingIds = ids.filter((id) => !cache.has(id));
+  if (missingIds.length > 0) {
+    const url = new URL(endpoint);
+    url.searchParams.set('apikey', apiKey);
+    url.searchParams.set('id', missingIds.join(','));
+
+    try {
+      const payload = await requestProviderJson({
+        request,
+        url,
+        options: { method: 'GET', headers: { accept: 'application/json' } },
+        timeoutMs,
+        invalidResponse,
+        errorForStatus: (status) => errorForStatus(status)
+      });
+      const names = normalizeLookupPayload(payload, field);
+      for (const id of missingIds) cache.set(id, names.get(id) ?? null);
+    } catch {
+      // Lookup metadata is optional. Never leak a Provider foreign-key ID into the public Media contract.
+    }
+  }
+
+  return new Map(ids.map((id) => [id, cache.get(id)]));
+}
+
+async function resolveGameLookups(games, options) {
+  const [genres, developers, publishers] = await Promise.all([
+    resolveLookupNames({ ...options, games, field: 'genres', endpoint: THEGAMESDB_GENRES_ENDPOINT, cache: options.caches.genres }),
+    resolveLookupNames({ ...options, games, field: 'developers', endpoint: THEGAMESDB_DEVELOPERS_ENDPOINT, cache: options.caches.developers }),
+    resolveLookupNames({ ...options, games, field: 'publishers', endpoint: THEGAMESDB_PUBLISHERS_ENDPOINT, cache: options.caches.publishers })
+  ]);
+  return { genres, developers, publishers };
+}
+
+async function normalizePayload(payload, page, includeAdult, lookupOptions) {
   const root = assertObject(payload);
   const data = assertObject(root.data);
   if (!Array.isArray(data.games)) throw invalidResponse();
@@ -149,9 +219,10 @@ function normalizePayload(payload, page, includeAdult) {
     throw invalidResponse();
   }
 
+  const lookupNames = await resolveGameLookups(data.games, lookupOptions);
   return {
     results: data.games
-      .map((game) => normalizeResult(game, root.include))
+      .map((game) => normalizeResult(game, root.include, lookupNames))
       .filter((media) => includeAdult || media.isAdult !== true),
     pagination: {
       page,
@@ -161,12 +232,13 @@ function normalizePayload(payload, page, includeAdult) {
   };
 }
 
-function normalizeDetailsPayload(payload) {
+async function normalizeDetailsPayload(payload, lookupOptions) {
   const root = assertObject(payload);
   const data = assertObject(root.data);
   if (!Array.isArray(data.games)) throw invalidResponse();
   if (data.games.length === 0) throw providerError(PROVIDER_ERROR_CODES.NOT_FOUND);
-  return normalizeResult(data.games[0], root.include);
+  const lookupNames = await resolveGameLookups(data.games, lookupOptions);
+  return normalizeResult(data.games[0], root.include, lookupNames);
 }
 
 function errorForStatus(status, payload, details = false) {
@@ -206,6 +278,12 @@ export function createTheGamesDBAdapter({
   const normalizedDetailsEndpoint = (typeof detailsEndpoint === 'string' && detailsEndpoint.trim()
     ? detailsEndpoint.trim()
     : THEGAMESDB_DETAILS_ENDPOINT).replace(/\/+$/, '');
+  const lookupCaches = {
+    genres: new Map(),
+    developers: new Map(),
+    publishers: new Map()
+  };
+  const lookupOptions = { apiKey: normalizedKey, request, timeoutMs, caches: lookupCaches };
 
   return {
     enabled: Boolean(normalizedKey),
@@ -268,7 +346,7 @@ export function createTheGamesDBAdapter({
         } catch {
           throw invalidResponse();
         }
-        return normalizePayload(payload, page, includeAdult);
+        return normalizePayload(payload, page, includeAdult, lookupOptions);
       } catch (error) {
         if (error instanceof ProviderError) throw error;
         if (timedOut || error?.name === 'AbortError') throw providerError(PROVIDER_ERROR_CODES.TIMEOUT);
@@ -329,7 +407,7 @@ export function createTheGamesDBAdapter({
         } catch {
           throw invalidResponse();
         }
-        const media = normalizeDetailsPayload(payload);
+        const media = await normalizeDetailsPayload(payload, lookupOptions);
         if (!includeAdult && media.isAdult === true) {
           throw providerError(PROVIDER_ERROR_CODES.NOT_FOUND);
         }

@@ -38,6 +38,17 @@ function media({ id = '550', title = 'Fight Club', provider = 'tmdb', type = 'MO
   };
 }
 
+function gameMedia({ id = '3498', title = 'Grand Theft Auto V', creators = [] } = {}) {
+  return {
+    ...media({ id, title, provider: 'rawg', type: 'GAME', creators }),
+    metadata: {
+      platforms: ['PC', 'PlayStation 5'],
+      developers: ['Rockstar North'],
+      publishers: ['Rockstar Games']
+    }
+  };
+}
+
 function list(results, source = 'tmdb', hasMore = false) {
   return {
     results,
@@ -189,6 +200,69 @@ describe('functional Discovery surfaces', () => {
     expect(within(detailsPanel).queryByText(/Extra Name/)).not.toBeInTheDocument();
   });
 
+  it('hides unavailable creator metadata for games', async () => {
+    const detail = gameMedia();
+    fetch.mockImplementation((url) => {
+      if (url === '/api/health') return Promise.resolve(health());
+      if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
+      if (url.includes('/api/media/search')) return Promise.resolve(response(list([detail], 'rawg')));
+      if (url.includes('/recommendations')) return Promise.resolve(response(list([], 'rawg')));
+      if (url.includes('/api/media/rawg/game/3498')) return Promise.resolve(response(detail));
+      return Promise.resolve(response(list([])));
+    });
+    render(<App />);
+    selectView('Search');
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Search media type' }), { target: { value: 'game' } });
+    const query = screen.getByRole('searchbox', { name: 'Search games by title' });
+    fireEvent.change(query, { target: { value: 'grand theft auto' } });
+    fireEvent.submit(query.closest('form'));
+    await screen.findByRole('heading', { name: 'Grand Theft Auto V' });
+    fireEvent.click(screen.getByRole('button', { name: 'View details for Grand Theft Auto V' }));
+
+    const detailsPanel = await screen.findByRole('region', { name: 'Grand Theft Auto V details' });
+    expect(within(detailsPanel).queryByText('Key creators')).not.toBeInTheDocument();
+    expect(within(detailsPanel).queryByText('Creators unavailable')).not.toBeInTheDocument();
+    expect(within(detailsPanel).getByText('Rockstar North')).toBeInTheDocument();
+  });
+
+  it('shows popular games when game recommendations are unavailable', async () => {
+    const detail = gameMedia();
+    const popularGame = gameMedia({ id: '292030', title: 'The Witcher 3: Wild Hunt' });
+    fetch.mockImplementation((url) => {
+      if (url === '/api/health') return Promise.resolve(health());
+      if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
+      if (url.includes('/api/media/search')) return Promise.resolve(response(list([detail], 'rawg')));
+      if (url.includes('/recommendations')) {
+        return Promise.resolve({
+          ok: false,
+          status: 503,
+          json: async () => ({ error: { code: 'PROVIDER_UNAVAILABLE', message: 'RAWG is currently unavailable.', details: [] } })
+        });
+      }
+      if (url.includes('/api/media/popular') && new URL(url, 'http://localhost').searchParams.get('type') === 'game') {
+        return Promise.resolve(response(list([popularGame], 'rawg')));
+      }
+      if (url.includes('/api/media/rawg/game/3498')) return Promise.resolve(response(detail));
+      return Promise.resolve(response(list([])));
+    });
+    render(<App />);
+    selectView('Search');
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Search media type' }), { target: { value: 'game' } });
+    const query = screen.getByRole('searchbox', { name: 'Search games by title' });
+    fireEvent.change(query, { target: { value: 'grand theft auto' } });
+    fireEvent.submit(query.closest('form'));
+    await screen.findByRole('heading', { name: 'Grand Theft Auto V' });
+    fireEvent.click(screen.getByRole('button', { name: 'View details for Grand Theft Auto V' }));
+
+    const popular = await screen.findByRole('region', { name: 'Popular games' });
+    expect(within(popular).getByRole('heading', { name: 'Popular games' })).toBeInTheDocument();
+    expect(await within(popular).findByRole('heading', { name: 'The Witcher 3: Wild Hunt' })).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Recommendations' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Provider unavailable.')).not.toBeInTheDocument();
+  });
+
   it('loads supported Discovery results without shelf attribution labels and shows empty state', async () => {
     fetch.mockImplementation((url) => {
       if (url === '/api/health') return Promise.resolve(health());
@@ -326,9 +400,31 @@ describe('functional Discovery surfaces', () => {
     render(<App />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Games' }));
-    expect(await screen.findByText('This popular now operation is not supported by the catalog provider.')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Retry Popular now' }));
+    expect(await screen.findByText('This popular operation is not supported by the catalog provider.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry Popular' }));
     expect(await screen.findByText('The catalog provider is rate-limited.')).toBeInTheDocument();
+  });
+
+  it('uses the Games shelf labels and skips unsupported Trending requests', async () => {
+    const gameDiscoveryUrls = [];
+    fetch.mockImplementation((url) => {
+      if (url === '/api/health') return Promise.resolve(health());
+      if (url === '/api/auth/me') return Promise.resolve(unauthenticatedResponse());
+      if (url.includes('/api/media/') && url.includes('type=game')) {
+        gameDiscoveryUrls.push(url);
+        return Promise.resolve(response(list([], 'rawg')));
+      }
+      return Promise.resolve(response(list([media()])));
+    });
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Games' }));
+
+    expect(await screen.findByText('No Popular Games available.')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Latest releases', level: 3 })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Trending this week', level: 3 })).not.toBeInTheDocument();
+    await waitFor(() => expect(gameDiscoveryUrls).toHaveLength(2));
+    expect(gameDiscoveryUrls.every((url) => !url.includes('/api/media/trending'))).toBe(true);
   });
 
   it('distinguishes application rate limits from Provider rate limits', async () => {

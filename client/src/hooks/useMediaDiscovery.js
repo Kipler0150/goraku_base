@@ -92,6 +92,13 @@ export function useMediaDiscovery({ includeAdult = true } = {}) {
     run({ ...options, page: state.pagination.page + 1 }, { append: true });
   }, [run, state.loadingPage, state.pagination]);
 
+  const clear = useCallback(() => {
+    cancel();
+    latestOptionsRef.current = null;
+    appendRef.current = false;
+    setState(INITIAL_STATE);
+  }, [cancel]);
+
   useEffect(() => () => cancel(), [cancel]);
   useEffect(() => {
     if (includeAdultRef.current === includeAdult) return;
@@ -105,6 +112,7 @@ export function useMediaDiscovery({ includeAdult = true } = {}) {
     load,
     retry,
     loadMore,
+    clear,
     isBusy: state.status === 'loading'
   };
 }
